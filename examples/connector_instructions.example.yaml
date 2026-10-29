@@ -1,0 +1,29 @@
+# The owner's part of the vault connector's server instructions.
+# Copy to user/connector_instructions.yaml and fill in your own values.
+# The rules themselves live in config/connector_instructions.md.j2; this file
+# only adds names, lists and file paths. Every key is optional. The rendered
+# text may have at most 60 lines, and no value may contain an em dash or a
+# line break.
+
+# How the model refers to you in the rules.
+owner_name: "the owner"
+
+# One optional sentence, shown as an extra numbered rule.
+privacy_rule: "Surprises for Child A never go into shared notes before Child A knows."
+
+# Where reminders and events go. Shown only when the reminders or calendar
+# integration is on. calendar is optional and defaults to none. Leave
+# routing_rows out to use reminders.routing from profile.yaml instead.
+routing_rows:
+  - {who: "Child A", list: "List A", calendar: "Home"}
+  - {who: "The household", list: "List B", calendar: "Home"}
+  - {who: "Groceries", list: "List C"}
+
+# The note that holds the truth for each topic. Update it before anything else.
+source_of_truth:
+  - {topic: "Topic", file: "Folder/Note.md"}
+  - {topic: "Another topic", file: "Folder/Another Note.md"}
+
+# More sentences, numbered after the fixed rules.
+extra_rules:
+  - "Ask the owner before booking or buying anything."

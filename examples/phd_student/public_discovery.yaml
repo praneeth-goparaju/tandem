@@ -1,0 +1,18 @@
+# Copy to user/public_discovery.yaml, replace every example with public-safe
+# scopes, then chmod 600. This catalog is the ONLY input to outbound searches.
+version: 1
+enabled: false
+schedule: "35 */3 * * *"
+max_queries_per_run: 4
+results_per_query: 6
+queries:
+  - id: regional_changes
+    query: "public announcements Example Region this week"
+    country: DE
+    search_lang: en
+    freshness: pw
+  - id: public_programs
+    query: "new public programs grants Germany this month"
+    country: DE
+    search_lang: en
+    freshness: pm

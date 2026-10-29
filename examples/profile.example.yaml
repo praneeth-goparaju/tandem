@@ -1,0 +1,39 @@
+# Example profile for an open-source fork, a PhD student persona.
+# Copy to user/profile.yaml (gitignored) and edit for your own use.
+
+user:
+  name: Alex
+  pronouns: they/them
+  timezone: America/New_York
+  locations: [Boston, Cambridge]
+  employer: MIT CSAIL
+  focus_areas:
+    - thesis research (ML systems, PhD year 4)
+    - paper submissions (NeurIPS, ICML, ICLR deadlines)
+    - collaborator network (advisor + 3 co-authors)
+    - health (cycling, sleep, cooking at home)
+    - finances (stipend + TA income, student loans)
+
+family:
+  partner: { name: Sam }
+  children: []
+
+target_venues: [NeurIPS, ICML, ICLR, ACL, CHI]
+
+# Where things live in your vault. Every value is a folder or file name inside
+# the vault, with / between parts. Leave a key out to get the default shown.
+notes:
+  folder_name: "my brain"
+  daily_notes_dir: "01 - Daily Notes"    # daily note path is <dir>/YYYY/MM/YYYY-MM-DD.md
+  inbox_dir: "00 - Inbox"
+  templates_dir: "11 - Templates"
+  actions_dir: "Actions"
+  daily_note_template: "Daily Note.md"   # inside templates_dir
+  # Optional: a note listing dated obligations and open decisions, tagged by
+  # area. When set, each area agent checks it for questions in its area.
+  # register_note: "Open Decisions.md"
+
+reminders:
+  routing:                               # free table; rows are people or topics
+    - { who: "the household", list: Family, calendar: iCloud }
+    - { who: "Groceries", list: Shopping }

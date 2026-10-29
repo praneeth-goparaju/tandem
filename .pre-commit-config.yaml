@@ -1,0 +1,34 @@
+# Pre-commit hooks. Install with `make hooks-install`.
+# Three layers of guardrail against accidental secret / PII leaks:
+#
+#   1. detect-private-key  — catches PEM private-key material
+#   2. gitleaks            — catches Slack / API / GitHub / AWS tokens
+#   3. tools/check_pii.py  — catches names + emails from a local blocklist
+#
+# The blocklist (tools/pii_blocklist.txt) is gitignored; generate it locally
+# from user/profile.yaml with `tools/gen_pii_blocklist.py` after install.
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # v6.0.0
+    hooks:
+      - id: detect-private-key
+      - id: check-yaml
+        exclude: ^config/agents/.*\.md$
+      - id: check-merge-conflict
+      - id: end-of-file-fixer
+        exclude: ^tests/fixtures/
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: 02808f45d038526bfcceebcbf6421c1047997ff9  # v8.18.4
+    hooks:
+      - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: check-pii
+        name: PII blocklist scan (staged diff)
+        entry: python3 tools/check_pii.py
+        language: system
+        stages: [pre-commit]
+        pass_filenames: false

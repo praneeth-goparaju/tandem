@@ -1,0 +1,90 @@
+# Default risk level per action type, when an agent does not specify one.
+#
+# Why this exists: agents were defaulting `risk` ad-hoc per call, so the same
+# action type ended up `auto` from one agent and `confirm` from another. That
+# made the queue inconsistent and the user-tap load unpredictable.
+#
+# An agent's explicit `risk` argument always wins. This file only sets the
+# fallback when the agent omits the param.
+#
+# Levels:
+#   auto     — execute immediately, no human in the loop
+#   confirm  — push to Slack for ✅/❌ approval
+#   manual   — surface in the daily note for explicit toggle, no push
+#
+# Override per-environment in user/risk_policy.yaml (loader merges).
+
+# Own-device types (create_reminder, complete_reminder, create_todoist_task,
+# and create_calendar_event or update_calendar_event for an event without
+# attendees or an organizer) always follow this policy: a
+# caller's explicit risk is ignored, and a caller marked as handling untrusted
+# input still runs them automatically. See OWN_DEVICE_AUTO_TYPES in
+# src/brain/actions/types.py (Decision 3, 2026-10-01).
+defaults:
+  # In-lane vault edits are reversible: a direct edit keeps the previous version
+  # under USER_DIR/vault-edit-backups for 30 days.
+  edit_vault_file: confirm
+
+  # The cascade door: validate and stage up to 8 related file edits before the
+  # first commit. Validation failures write nothing; an exceptional I/O failure
+  # during the commit loop can leave a partial cascade. ALWAYS confirm — the
+  # cascade shares one approval, and the type is excluded from
+  # AUTO_ELIGIBLE_TYPES so an explicit risk=auto is clamped back to confirm.
+  edit_vault_files: confirm
+
+  # Drafts that go OUT to a person (email, message) need explicit yes.
+  send_draft: confirm
+
+  # Notifications are cheap and reversible (delete the message), let agents
+  # ship them autonomously when judged.
+  push_notification: auto
+
+  # Todoist tasks are local-only and easy to close — no need to confirm.
+  create_todoist_task: auto
+
+  # iCloud Calendar. propose_action runs an event with only the owner on it
+  # without a tap, and always asks for one when the event has attendees or an
+  # organizer, whatever this file says.
+  create_calendar_event: confirm
+  update_calendar_event: auto
+
+  # Reminders are local, free, and one tap to delete — auto is fine.
+  create_reminder: auto
+
+  # Completing a reminder is an own-device change and runs on its own; it is
+  # one tap to reopen in Reminders.
+  complete_reminder: auto
+
+  # Contacts edits are visible across every Apple device that touches
+  # this iCloud account. Confirm by default; bad merges or stale fields
+  # are awkward to clean up.
+  create_contact: confirm
+  update_contact: confirm
+
+  # Mail archive defaults to confirm for scheduled and unknown callers.
+  # The authenticated local MCP adapter carries a separate, bounded direct
+  # capability for interactive Codex/Claude sessions; a model cannot mint it.
+  # `mail_reply_link` remains the separate HMA-aware reply-composition surface.
+  mail_archive: confirm
+  mail_archive_batch: confirm
+
+  # Direct only for the authenticated local trusted MCP adapter. Other callers
+  # remain confirm-gated, and the action is not generally auto-eligible.
+  send_bot_message: confirm
+
+  # Promotion out of the intake quarantine (untrusted outside
+  # content -> long-term knowledge) crosses the trust boundary.
+  # Human confirm, always — the type is also excluded from
+  # AUTO_ELIGIBLE_TYPES, so an explicit risk=auto gets clamped back.
+  promote_intake: confirm
+
+  # Door 3: promote agent-authored durable knowledge into the vault's
+  # agent-owned notes folder. The vault grows ONLY through this human gate,
+  # so confirm always — the type is also excluded from AUTO_ELIGIBLE_TYPES,
+  # clamping an explicit risk=auto back to confirm.
+  promote_note: confirm
+
+  # Add one line to an existing note after a unique anchor line. Confirm
+  # always: propose_action ignores a caller's risk for this type, and it is
+  # excluded from AUTO_ELIGIBLE_TYPES, so it never runs without a human.
+  insert_vault_line: confirm

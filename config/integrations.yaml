@@ -1,0 +1,4 @@
+# Safe clean-clone defaults. Enable real integrations only in the gitignored
+# user/integrations.yaml overlay; see docs/INTEGRATIONS.md.
+notifier: noop
+tasks: noop

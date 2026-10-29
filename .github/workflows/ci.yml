@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least-privilege GITHUB_TOKEN — CI only needs to read the repo.
+permissions:
+  contents: read
+
+jobs:
+  lint-and-test:
+    name: Lint + Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    env:
+      USER_DIR: ${{ github.workspace }}/tests/fixtures/user-ci
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12"]
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,garmin]"
+
+      - name: Secret scan
+        run: |
+          pre-commit run detect-private-key --all-files
+          pre-commit run gitleaks --all-files
+
+      - name: Personal values scan
+        run: python3 tools/check_pii.py --tree
+
+      - name: Dependency audit (pip-audit)
+        run: pip-audit --skip-editable
+
+      - name: Ruff check
+        run: ruff check .
+
+      - name: Mypy
+        run: mypy
+
+      - name: Pytest
+        run: pytest -q
+
+      - name: Smoke import
+        run: |
+          python -m src.brain.mcp.pi_bridge list >/dev/null
+          python -c "from src.orchestrator.registry import AGENT_REGISTRY, RUN_MODES; print(f'agents={len(AGENT_REGISTRY)} modes={len(RUN_MODES)}')"
+
+      - name: Brain doctor (strict)
+        env:
+          BRAIN_DOCTOR_SKIP_RUNTIME: "1"
+        run: python -m src.cli doctor --strict
+
+  clean-clone-smoke:
+    name: Minimal clean-clone smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install supported base configuration
+        run: make install
+
+      - name: No-overlay smoke
+        env:
+          BRAIN_DOCTOR_SKIP_RUNTIME: "1"
+          USER_DIR: ${{ runner.temp }}/brain-empty-user
+        run: |
+          .venv/bin/python -m src.brain.mcp.pi_bridge list >/dev/null
+          .venv/bin/python -m src.cli doctor --strict
+
+      - name: Example dry run
+        run: make demo

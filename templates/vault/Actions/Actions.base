@@ -1,0 +1,32 @@
+filters:
+  and:
+    - 'note.type == "action"'
+views:
+  - type: table
+    name: Next
+    filters:
+      and:
+        - 'note.status == "next"'
+    order:
+      - file.name
+      - note.priority
+      - note.due
+      - note.added
+  - type: table
+    name: Waiting
+    filters:
+      and:
+        - 'note.status == "waiting"'
+    order:
+      - file.name
+      - note.waiting_on
+      - note.follow_up
+      - note.added
+  - type: table
+    name: Done
+    filters:
+      and:
+        - 'note.status == "done"'
+    order:
+      - file.name
+      - note.updated

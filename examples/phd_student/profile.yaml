@@ -1,0 +1,21 @@
+# Example profile for an open-source fork — a PhD student persona.
+# Copy to user/profile.yaml (gitignored) and edit for your own use.
+
+user:
+  name: Alex
+  pronouns: they/them
+  timezone: America/New_York
+  locations: [Boston, Cambridge]
+  employer: MIT CSAIL
+  focus_areas:
+    - thesis research (ML systems, PhD year 4)
+    - paper submissions (NeurIPS, ICML, ICLR deadlines)
+    - collaborator network (advisor + 3 co-authors)
+    - health (cycling, sleep, cooking at home)
+    - finances (stipend + TA income, student loans)
+
+family:
+  partner: { name: Sam }
+  children: []
+
+target_venues: [NeurIPS, ICML, ICLR, ACL, CHI]

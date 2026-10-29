@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><defs>
+<linearGradient id="cyl" x1="0" y1="0" x2="1" y2="0">
+  <stop offset="0" stop-color="#8a5e1e"/><stop offset="0.18" stop-color="#d6a24a"/><stop offset="0.36" stop-color="#fbe6a8"/>
+  <stop offset="0.5" stop-color="#e7bb63"/><stop offset="0.8" stop-color="#b9842f"/><stop offset="1" stop-color="#6e4813"/></linearGradient>
+<linearGradient id="band" x1="0" y1="0" x2="1" y2="0">
+  <stop offset="0" stop-color="#2a0f13"/><stop offset="0.35" stop-color="#7a2530"/><stop offset="0.5" stop-color="#9b3442"/><stop offset="1" stop-color="#2a0f13"/></linearGradient>
+<linearGradient id="top" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff1c4"/><stop offset="1" stop-color="#d7a64e"/></linearGradient>
+<linearGradient id="brim" x1="0" y1="0" x2="0" y2="1">
+  <stop offset="0" stop-color="#fbe6a8"/><stop offset="0.45" stop-color="#d9a64d"/><stop offset="1" stop-color="#7d5418"/></linearGradient>
+<radialGradient id="sphere" cx="0.35" cy="0.3" r="0.75">
+  <stop offset="0" stop-color="#fff6d6"/><stop offset="0.35" stop-color="#e8bb62"/><stop offset="1" stop-color="#7a5016"/></radialGradient>
+<radialGradient id="pupil" cx="0.4" cy="0.35" r="0.7"><stop offset="0" stop-color="#2b3f63"/><stop offset="1" stop-color="#070d1a"/></radialGradient>
+<linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+  <stop offset="0" stop-color="#fff1c4"/><stop offset="0.4" stop-color="#d9a64d"/><stop offset="1" stop-color="#6e4813"/></linearGradient>
+<radialGradient id="glass" cx="0.35" cy="0.3" r="0.8"><stop offset="0" stop-color="#ffffff" stop-opacity="0.35"/><stop offset="0.5" stop-color="#9fc0ea" stop-opacity="0.12"/><stop offset="1" stop-color="#ffffff" stop-opacity="0.04"/></radialGradient>
+<linearGradient id="stache" x1="0" y1="0" x2="0" y2="1">
+  <stop offset="0" stop-color="#fbe6a8"/><stop offset="0.5" stop-color="#d4a04a"/><stop offset="1" stop-color="#7d5418"/></linearGradient>
+</defs>
+<!-- hat crown (cylinder) -->
+<path d="M346 196 L678 196 L698 404 L326 404 Z" fill="url(#cyl)"/>
+<ellipse cx="512" cy="198" rx="166" ry="30" fill="url(#top)"/>
+<ellipse cx="512" cy="198" rx="166" ry="30" fill="none" stroke="#fff6d6" stroke-opacity="0.6" stroke-width="3"/>
+<!-- band -->
+<path d="M332 340 L692 340 L698 404 L326 404 Z" fill="url(#band)"/>
+<path d="M332 340 L692 340" stroke="#000" stroke-opacity="0.25" stroke-width="4"/>
+<!-- brim -->
+<ellipse cx="512" cy="414" rx="268" ry="46" fill="url(#brim)"/>
+<ellipse cx="512" cy="404" rx="186" ry="22" fill="#5b3a0e" opacity="0.55"/>
+<path d="M262 406 C320 382 420 376 512 376 C604 376 704 382 762 406" fill="none" stroke="#fff6d6" stroke-opacity="0.7" stroke-width="5" stroke-linecap="round"/>
+<!-- left eye: gold sphere with pupil -->
+<circle cx="408" cy="566" r="40" fill="url(#sphere)"/>
+<circle cx="412" cy="570" r="15" fill="url(#pupil)"/>
+<circle cx="396" cy="550" r="7" fill="#ffffff" opacity="0.8"/>
+<!-- monocle: torus ring + glass + chain -->
+<circle cx="616" cy="562" r="66" fill="url(#glass)"/>
+<circle cx="622" cy="568" r="15" fill="url(#pupil)"/>
+<circle cx="616" cy="562" r="66" fill="none" stroke="#5b3a0e" stroke-width="30" opacity="0.5"/>
+<circle cx="616" cy="562" r="66" fill="none" stroke="url(#ring)" stroke-width="24"/>
+<path d="M566 520 C580 504 600 498 620 498" fill="none" stroke="#ffffff" stroke-opacity="0.75" stroke-width="7" stroke-linecap="round"/>
+<path d="M680 592 C712 652 708 704 684 756" fill="none" stroke="url(#ring)" stroke-width="12" stroke-linecap="round"/>
+<!-- moustache -->
+<path d="M512 650 C462 692 384 704 322 668 C368 732 466 746 512 712 C558 746 656 732 702 668 C640 704 562 692 512 650 Z" fill="url(#stache)"/>
+<path d="M512 658 C470 690 410 700 360 684" fill="none" stroke="#fff6d6" stroke-opacity="0.7" stroke-width="6" stroke-linecap="round"/>
+<path d="M512 658 C554 690 614 700 664 684" fill="none" stroke="#fff6d6" stroke-opacity="0.45" stroke-width="6" stroke-linecap="round"/>
+<!-- smile -->
+<path d="M444 806 C484 826 540 826 580 806" fill="none" stroke="url(#stache)" stroke-width="26" stroke-linecap="round"/>
+</svg>

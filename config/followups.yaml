@@ -1,0 +1,17 @@
+# Follow-up collector settings. $USER_DIR/followups.yaml replaces any key it sets.
+
+# Claude Code project folder names, as they appear under ~/.claude/projects, to skip.
+# A name also skips every folder named after it and "-": its worktrees and
+# subfolders (-Users-me-work-acme skips -Users-me-work-acme-api and
+# -Users-me-work-acme--worktrees-x). Matching ignores case.
+exclude_projects: []
+
+# Folder names, one path component each, to skip wherever a Claude Code session
+# ran: a transcript line whose working directory has one of them as a component
+# is not read ("acme" skips /Users/me/work/acme/api, whatever the project
+# folder). Matching ignores case.
+exclude_paths: []
+
+# Slack channel ids of the retired per-area channels, read through old_channels_until.
+old_channels: []
+old_channels_until: 2026-10-30

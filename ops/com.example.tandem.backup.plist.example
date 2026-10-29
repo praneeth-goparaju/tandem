@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  Render this template before installation. Replace every __PLACEHOLDER__;
+  launchd does not expand shell variables or tildes in plist values.
+-->
+<dict>
+    <key>Label</key>
+    <string>com.example.tandem.backup</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__REPO_ROOT__/scripts/backup_memory.sh</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>__REPO_ROOT__</string>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>3</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>Umask</key>
+    <integer>63</integer>
+    <key>LowPriorityIO</key>
+    <true/>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>__HOME__</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>RESTIC_REPOSITORY</key>
+        <string>__RESTIC_REPOSITORY__</string>
+        <key>RESTIC_PASSWORD_FILE</key>
+        <string>__RESTIC_PASSWORD_FILE__</string>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>__LOG_DIR__/brain-backup.log</string>
+    <key>StandardErrorPath</key>
+    <string>__LOG_DIR__/brain-backup-error.log</string>
+</dict>
+</plist>

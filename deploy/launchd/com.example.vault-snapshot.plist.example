@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  Template. Do not load it as it is. Run `python -m src.cli render-launchd` to
+  write a copy with the values filled in to your private folder.
+-->
+<dict>
+    <key>Label</key>
+    <string>com.example.vault-snapshot</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>__REPO_ROOT__/scripts/vault_snapshot.sh</string>
+        <string>__VAULT_PATH__</string>
+        <string>__HOME__/brain-vault.git</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>23</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>__HOME__/connector-data/logs/vault-snapshot.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/connector-data/logs/vault-snapshot.log</string>
+</dict>
+</plist>

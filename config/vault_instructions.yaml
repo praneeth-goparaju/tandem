@@ -1,0 +1,24 @@
+# T6 — the vault instruction layer (shipped defaults).
+#
+# Only ALLOWLISTED vault files count as instructions to an agent. Everything
+# else in the vault is data an agent may read but never obey. The prompt hook
+# (src/brain/runtime/vault_instructions.py) loads each allowlisted file at
+# render time under a labeled "Standing guidance" section; the doctor validates
+# these paths at boot.
+#
+# This shipped file carries GENERIC / EMPTY defaults so a fork or CI (no vault
+# mounted) stays green. The REAL per-agent mapping lives in the gitignored
+# user/vault_instructions.yaml overlay, deep-merged on top of this at runtime —
+# same pattern as integrations.yaml. See user/vault_instructions.yaml.
+vault_instructions:
+  # Files under these roots MAY be allowlisted. A root ending in "/" is a
+  # directory prefix (files strictly beneath it qualify); any other entry is an
+  # exact vault-relative file path. A path that is absolute, uses ".."
+  # traversal, or escapes every root is rejected — it is never read.
+  allowed_roots: []
+
+  # Per-agent list of vault-relative instruction files. Empty here; the real
+  # mapping (area agents -> their standing guidance and conventions; assistant
+  # additionally the Communication Voice Profile) is set
+  # in the user/ overlay.
+  agents: {}

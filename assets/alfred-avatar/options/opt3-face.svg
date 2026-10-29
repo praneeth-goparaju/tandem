@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><defs>
+<linearGradient id="gold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f6dc98"/><stop offset="0.5" stop-color="#d9aa52"/><stop offset="1" stop-color="#a87a2c"/></linearGradient>
+<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1f3a63"/><stop offset="1" stop-color="#0c1830"/></linearGradient></defs>
+<rect width="1024" height="1024" fill="url(#bg)"/>
+<path d="M352 170 L672 170 L690 400 L334 400 Z" fill="url(#gold)"/>
+<rect x="334" y="352" width="356" height="34" fill="#0c1830" opacity="0.55"/>
+<rect x="250" y="398" width="524" height="44" rx="22" fill="url(#gold)"/>
+<g fill="none" stroke="url(#gold)" stroke-linecap="round" stroke-linejoin="round">
+<circle cx="408" cy="560" r="30" stroke-width="30"/>
+<circle cx="616" cy="560" r="64" stroke-width="26"/>
+<path d="M682 586 C712 650 708 700 684 750" stroke-width="12"/>
+</g>
+<path d="M512 650 C462 692 384 704 322 668 C368 728 466 742 512 708 C558 742 656 728 702 668 C640 704 562 692 512 650 Z" fill="url(#gold)"/>
+<path d="M444 806 C484 826 540 826 580 806" fill="none" stroke="url(#gold)" stroke-width="26" stroke-linecap="round"/>
+</svg>
