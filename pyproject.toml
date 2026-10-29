@@ -17,7 +17,7 @@ dependencies = [
     "soupsieve>=2.8.4",       # security floor for beautifulsoup4's selector engine
     "lzstring>=1.0.4",        # decompresses Immowelt's UFRN payload
     "caldav>=1.3",            # iCloud Calendar (CalDAV) read + write
-    "vobject>=0.9.7",         # iCalendar (RFC 5545) parsing for events
+    "vobject>=0.9.9",         # iCalendar (RFC 5545) parsing for events
     "defusedxml>=0.7.1",      # XXE-safe parsing of server-supplied CardDAV/CalDAV XML
     "pyobjc-framework-EventKit>=10.0; sys_platform == 'darwin'",  # macOS Reminders
     "claude-agent-sdk==0.2.160",  # runs agents through Claude Code (exact pin)
