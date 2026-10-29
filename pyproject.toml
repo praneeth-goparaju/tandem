@@ -30,7 +30,7 @@ dependencies = [
     # Security floors for transitive network/crypto dependencies. Keeping them
     # explicit prevents an existing venv from retaining an advisory-bearing
     # version merely because the parent package's broad range still accepts it.
-    "click>=8.3.3",
+    "click>=8.5.0",
     "idna>=3.15",
 ]
 
