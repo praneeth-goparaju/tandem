@@ -1,0 +1,77 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+service-account.json
+*-service-account.json
+
+# Data & logs
+tmp.log
+*.log
+search/data/
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Local runtime data
+/data/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# User-specific — personal profile, sources, agents (matches dir and symlink)
+user/
+/user
+
+# Vault connector state (tokens, audit log, secrets), never committed
+connector-data/
+
+# Only the shipped example overlay is tracked; other example folders stay local
+/examples/*/
+!/examples/phd_student/
+!/examples/phd_student/**
+
+# Local working folders
+projects/
+!tests/fixtures/followups/projects/
+
+# Private blocklist for the pre-commit `check-pii` hook, generated from
+# user/profile.yaml with `make hooks-pii`
+tools/pii_blocklist.txt
+
+# Rendered prompt snapshots (generated from your profile)
+tests/fixtures/baseline/
+tests/fixtures/refactored/
+
+# Local git hooks and machine-specific helper scripts. Reusable launchd
+# templates live under ops/ and deploy/launchd/. Name any other local-only file
+# in .git/info/exclude, not here.
+/hooks/
+/scripts/local/
+/scripts/*.plist
+
+# Git worktrees
+.worktrees/
+
+# Superpowers plugin scratch (brainstorm sessions, server state)
+.superpowers/
+
+node_modules/

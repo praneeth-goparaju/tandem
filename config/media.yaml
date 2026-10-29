@@ -1,0 +1,6 @@
+# The Whisper model that transcribes voice notes. Its path comes from BRAIN_WHISPER_MODEL.
+# The doctor checks the model file against this SHA-256 when BRAIN_MEDIA is on.
+whisper:
+  model: ggml-small.bin
+  sha256: "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b"
+  language: auto

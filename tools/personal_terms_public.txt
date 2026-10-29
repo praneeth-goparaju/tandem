@@ -1,0 +1,8 @@
+# Terms that must never appear in the tracked tree, one per line, matched
+# case-insensitively as substrings. This shipped file holds no terms and no
+# personal names. Token patterns are left to gitleaks.
+#
+# Your own names go in user/private_terms.txt (private, never committed), read
+# only by `make scan` / `check_pii.py --tree --private`. Matching is by
+# substring, so write full names ("Jane Doe"), not short words that would also
+# match unrelated text.

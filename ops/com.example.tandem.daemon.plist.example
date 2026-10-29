@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  Render this template before installation. Replace every __PLACEHOLDER__;
+  launchd does not expand shell variables or tildes in plist values.
+-->
+<dict>
+    <key>Label</key>
+    <string>com.example.tandem.daemon</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__REPO_ROOT__/.venv/bin/python</string>
+        <string>-m</string>
+        <string>src.orchestrator.scheduler</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>__REPO_ROOT__</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>Umask</key>
+    <integer>63</integer>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>__HOME__</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>TIMEZONE</key>
+        <string>__TIMEZONE__</string>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>__LOG_DIR__/tandem.log</string>
+    <key>StandardErrorPath</key>
+    <string>__LOG_DIR__/tandem-error.log</string>
+</dict>
+</plist>

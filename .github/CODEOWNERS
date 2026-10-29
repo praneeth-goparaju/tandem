@@ -1,0 +1,16 @@
+# CODEOWNERS: GitHub asks the owners listed here to review every pull request
+# that touches the matching paths. With branch protection (see CONTRIBUTING.md)
+# that review is required before merge.
+#
+# Maintainer: replace @your-github-handle with your own GitHub user or team and
+# remove the leading "# " from the lines you want. While every line is a
+# comment, GitHub requests no code-owner review.
+#
+# Format: <path pattern>  <@user-or-team ...>
+# Docs: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# *                               @your-github-handle
+# /src/orchestrator/              @your-github-handle
+# /src/brain/connector/           @your-github-handle
+# /config/                        @your-github-handle
+# /.github/                       @your-github-handle

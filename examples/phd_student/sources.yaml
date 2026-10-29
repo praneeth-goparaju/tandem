@@ -1,0 +1,11 @@
+# Canonical file paths for the PhD-student example persona.
+# Paths are relative to the vault root (an Obsidian or plain-markdown folder).
+
+thesis: "02 - Thesis/Dissertation.md"
+advisor_notes: "02 - Thesis/Advisor Notes.md"
+papers_in_progress: "03 - Papers/In Progress.md"
+papers_submitted: "03 - Papers/Submitted.md"
+reading_list: "04 - Reading/Backlog.md"
+collaborator_log: "05 - Collaborators/Notes.md"
+health_log: "06 - Health/Log.md"
+finances: "07 - Finances/Tracker.md"

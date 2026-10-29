@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  Template. Do not load it as it is. Run `python -m src.cli render-launchd` to
+  write a copy with the values filled in to your private folder.
+-->
+<dict>
+    <key>Label</key>
+    <string>com.example.local-backup</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__REPO_ROOT__/.venv/bin/python</string>
+        <string>-m</string>
+        <string>src.orchestrator.local_backup</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>__REPO_ROOT__</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>__HOME__</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>TZ</key>
+        <string>__TIMEZONE__</string>
+        <key>TIMEZONE</key>
+        <string>__TIMEZONE__</string>
+        <key>BRAIN_DIR</key>
+        <string>__REPO_ROOT__</string>
+        <key>USER_DIR</key>
+        <string>__USER_DIR__</string>
+    </dict>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>23</integer>
+        <key>Minute</key>
+        <integer>50</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>__HOME__/connector-data/logs/local-backup.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/connector-data/logs/local-backup.log</string>
+</dict>
+</plist>

@@ -1,0 +1,9 @@
+# CI must never contact external services: the notifier stays noop, and its
+# options only map the two places to the shipped placeholder channels.
+notifier:
+  type: noop
+  options:
+    channels:
+      alfred: {channel_id: "C0EXAMPLE01"}
+      alfred_private: {channel_id: "D0EXAMPLE01"}
+tasks: noop

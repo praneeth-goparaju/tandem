@@ -1,0 +1,123 @@
+[project]
+name = "tandem"
+version = "1.0.0"
+description = "A personal assistant for your own Obsidian vault: a vault connector for the Claude app and an optional agent daemon, run on a Mac you own"
+license = {text = "MIT"}
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28.0",
+    "apscheduler>=3.10.0",
+    "python-dotenv>=1.0.0",
+    "slack_sdk>=3.27",
+    "aiohttp>=3.14.3",        # Socket Mode; security floor
+    "pyyaml>=6.0",
+    "pydantic>=2.0",
+    "jinja2>=3.1",
+    "beautifulsoup4>=4.14.3", # housing scrapers
+    "soupsieve>=2.8.4",       # security floor for beautifulsoup4's selector engine
+    "lzstring>=1.0.4",        # decompresses Immowelt's UFRN payload
+    "caldav>=1.3",            # iCloud Calendar (CalDAV) read + write
+    "vobject>=0.9.7",         # iCalendar (RFC 5545) parsing for events
+    "defusedxml>=0.7.1",      # XXE-safe parsing of server-supplied CardDAV/CalDAV XML
+    "pyobjc-framework-EventKit>=10.0; sys_platform == 'darwin'",  # macOS Reminders
+    "claude-agent-sdk==0.2.160",  # runs agents through Claude Code (exact pin)
+    "matplotlib>=3.9",        # chart tool (Agg backend, no GUI)
+    "cairosvg>=2.9",          # SVG drawing tool: renders the checked SVG to PNG
+    "mcp>=2.3,<3",            # vault connector: MCP server over Streamable HTTP
+    "argon2-cffi>=23.1",      # vault connector: password hashing
+    "pyotp>=2.9",             # vault connector: one-time codes for sign-in
+    "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'",  # vault connector: macOS system calls
+    # Security floors for transitive network/crypto dependencies. Keeping them
+    # explicit prevents an existing venv from retaining an advisory-bearing
+    # version merely because the parent package's broad range still accepts it.
+    "click>=8.3.3",
+    "idna>=3.15",
+]
+
+[project.optional-dependencies]
+garmin = [
+    "garminconnect>=0.3.11,<0.4",
+]
+dev = [
+    "pytest>=8.0",
+    # Pin ruff to a minor range: an unbounded `>=` lets CI silently pick up a
+    # newer ruff that adds/strengthens lint rules, turning a green build red
+    # with zero code changes (non-reproducible CI). Bump deliberately.
+    "ruff>=0.15.11,<0.16",
+    "mypy>=1.8",       # static type checking — `make typecheck`
+    "pip-audit>=2.7",  # dependency CVE scanning — mirrors the blocking CI step
+    "pre-commit>=3.7,<5",  # reproducible local + CI secret-scanner runner
+]
+
+[project.scripts]
+brain = "src.cli:main"
+brain-tools-mcp = "src.gateway.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+
+# ---- Linting / formatting ---------------------------------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = [
+    "user",                  # gitignored; user-authored content
+    "search",                # only search/data/ (live SQLite DBs) remains here
+]
+
+[tool.ruff.lint]
+# Catches real bugs without being noisy. B (bugbear) added once the base set
+# went green — it catches real bugs (silent zip-truncation, mutable defaults).
+# SIM/RUF deferred: mostly stylistic and high-volume (RUF ~128), low value.
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes (unused imports, undefined names, …)
+    "W",   # pycodestyle warnings
+    "I",   # isort (import order)
+    "UP",  # pyupgrade (modernize syntax for target-version)
+    "B",   # flake8-bugbear (real bug patterns)
+    "S",   # flake8-bandit — security anti-patterns (injection, weak crypto, unsafe XML/yaml)
+]
+ignore = [
+    "E501",   # line too long — formatter handles most; don't warn on docstrings
+    "UP042",  # ActionType/Risk/Status use `str, Enum` deliberately. StrEnum
+              # changes str()/format() to return the value; code relies on the
+              # str+Enum mixin (member == its value, .value for JSON). Don't churn.
+    "S101",   # assert — idiomatic in tests AND as cheap runtime invariants here
+    "S110",   # try/except/pass — deliberate best-effort cleanups (already BLE001-marked)
+    "S112",   # try/except/continue — deliberate per-item skip in best-effort loops
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests: unused imports, the compact `_call` one-liners, and intentional mock
+# redefinitions (e.g. a `json` method shadowing the import) are all deliberate.
+"tests/*" = ["F401", "E702", "F811", "S"]  # bandit: tests use asserts, fixture tokens, /tmp legitimately
+"tools/*" = ["S607"]                        # dev tools invoke `git` on PATH intentionally
+# These modules place some imports below module-level code ON PURPOSE:
+"src/brain/mcp/tools/icloud_read.py" = ["E402"]  # tool imports follow the _decode_header helper
+
+
+# ---- pytest -----------------------------------------------------------------
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q"
+
+
+# ---- Type checking ---------------------------------------------------------
+# `make typecheck` and CI both enforce this baseline. Third-party stubs remain
+# optional while application code is migrated incrementally to stricter checks.
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+check_untyped_defs = true
+files = ["src"]
+exclude = "^(user|examples|search)/"

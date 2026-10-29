@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 540" width="960" height="540">
+<defs><marker id="head" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0 L10 5 L0 10 Z" fill="#1b1b1f"/></marker></defs>
+<rect width="960" height="540" fill="#ffffff"/>
+<rect x="24" y="24" width="444" height="492" rx="20" fill="#faf6ee" stroke="#d8ccb4" stroke-width="2" stroke-dasharray="none"/>
+<text x="44" y="54" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="700" fill="#1b1b1f">The vault connector</text>
+<rect x="492" y="24" width="444" height="492" rx="20" fill="#faf6ee" stroke="#c9a24a" stroke-width="2" stroke-dasharray="8 6"/>
+<text x="512" y="54" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="16" font-weight="700" fill="#1b1b1f">The agent daemon, optional</text>
+<rect x="96" y="66" width="300" height="56" rx="12" fill="#f6efe2" stroke="#1b1b1f" stroke-width="2.5"/>
+<text x="246.0" y="89.4" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#1b1b1f">claude.ai and the Claude app</text>
+<text x="246.0" y="108.4" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#3a3a40">chats and scheduled tasks</text>
+<path d="M246 122 L246 150" stroke="#1b1b1f" stroke-width="2.5" fill="none" marker-end="url(#head)"/>
+<rect x="96" y="154" width="300" height="44" rx="12" fill="#f6efe2" stroke="#1b1b1f" stroke-width="2.5"/>
+<text x="246.0" y="180.9" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#1b1b1f">Cloudflare Tunnel</text>
+<path d="M246 198 L246 226" stroke="#1b1b1f" stroke-width="2.5" fill="none" marker-end="url(#head)"/>
+<rect x="96" y="230" width="300" height="60" rx="12" fill="#f6efe2" stroke="#1b1b1f" stroke-width="2.5"/>
+<text x="246.0" y="255.4" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#1b1b1f">Vault connector on 127.0.0.1</text>
+<text x="246.0" y="274.4" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#3a3a40">OAuth sign-in, /mcp and /mcp/limited</text>
+<rect x="36" y="350" width="132" height="84" rx="12" fill="#f6efe2" stroke="#1b1b1f" stroke-width="2.5"/>
+<text x="102.0" y="396.6" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1b1b1f">Your vault</text>
+<path d="M246 290 L246 320 L102.0 320 L102.0 346" stroke="#1b1b1f" stroke-width="2.5" fill="none" marker-end="url(#head)"/>
+<rect x="180" y="350" width="132" height="84" rx="12" fill="#f6efe2" stroke="#c9a24a" stroke-width="2.5"/>
+<text x="246.0" y="378.6" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1b1b1f">Reminders, Calendar</text>
+<text x="246.0" y="396.6" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#3a3a40">mail, contacts</text>
+<text x="246.0" y="414.6" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#3a3a40">each optional</text>
+<path d="M246 290 L246 320 L246.0 320 L246.0 346" stroke="#1b1b1f" stroke-width="2.5" fill="none" marker-end="url(#head)"/>
+<rect x="324" y="350" width="132" height="84" rx="12" fill="#f6efe2" stroke="#1b1b1f" stroke-width="2.5"/>
+<text x="390.0" y="387.6" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1b1b1f">Undo store</text>
+<text x="390.0" y="405.6" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#3a3a40">and audit log</text>
+<path d="M246 290 L246 320 L390.0 320 L390.0 346" stroke="#1b1b1f" stroke-width="2.5" fill="none" marker-end="url(#head)"/>
+<rect x="564" y="66" width="300" height="44" rx="12" fill="#f6efe2" stroke="#1b1b1f" stroke-width="2.5"/>
+<text x="714.0" y="92.9" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#1b1b1f">APScheduler or the CLI</text>
+<path d="M714 110 L714 138" stroke="#1b1b1f" stroke-width="2.5" fill="none" marker-end="url(#head)"/>
+<rect x="564" y="142" width="300" height="44" rx="12" fill="#f6efe2" stroke="#1b1b1f" stroke-width="2.5"/>
+<text x="714.0" y="168.9" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#1b1b1f">Python orchestrator</text>
+<path d="M714 186 L714 214" stroke="#1b1b1f" stroke-width="2.5" fill="none" marker-end="url(#head)"/>
+<rect x="564" y="218" width="300" height="56" rx="12" fill="#f6efe2" stroke="#1b1b1f" stroke-width="2.5"/>
+<text x="714.0" y="241.4" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#1b1b1f">Claude runner</text>
+<text x="714.0" y="260.4" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#3a3a40">Claude Agent SDK, on your subscription</text>
+<path d="M714 274 L714 302" stroke="#1b1b1f" stroke-width="2.5" fill="none" marker-end="url(#head)"/>
+<rect x="564" y="306" width="300" height="88" rx="12" fill="#f6efe2" stroke="#1b1b1f" stroke-width="2.5"/>
+<text x="714.0" y="327.6" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1b1b1f">What a session may use</text>
+<text x="714.0" y="345.6" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#3a3a40">Read, Glob, Grep: the vault only</text>
+<text x="714.0" y="363.6" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#3a3a40">Edit, Write, Agent: only where granted</text>
+<text x="714.0" y="381.6" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#3a3a40">allowlisted brain tools</text>
+<rect x="564" y="428" width="300" height="64" rx="12" fill="#f6efe2" stroke="#1b1b1f" stroke-width="2.5"/>
+<text x="714.0" y="455.4" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#1b1b1f">SQLite, the vault, Slack</text>
+<text x="714.0" y="474.4" text-anchor="middle" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#3a3a40">and the integrations you turned on</text>
+<path d="M564 164 L520 164 L520 460 L560 460" stroke="#1b1b1f" stroke-width="2.5" fill="none" marker-end="url(#head)"/>
+</svg>

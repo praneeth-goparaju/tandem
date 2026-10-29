@@ -1,0 +1,41 @@
+# Synthetic overlay for CI ONLY. The real overlay (user/profile.yaml) is
+# gitignored because it carries personal data, so without this the suite cannot
+# import anything that depends on it and CI aborts during collection.
+#
+# Every value here is invented. "Musterstadt" is the placeholder town the
+# housing fixtures already use. Never put real names, addresses or coordinates
+# in this file; that is the whole reason the real overlay stays private.
+user:
+  name: Test Owner
+  timezone: Europe/Berlin
+
+notes:
+  folder_name: test vault
+
+family: {}
+target_companies: []
+
+housing_corridor:
+  anchor:
+    lat: 0.0
+    lon: 0.0
+  radius_km: 15
+  cities:
+    - Musterstadt
+    - Beispieldorf
+  postcodes:
+    - "12345"
+    - "12346"
+  city_aliases:
+    musterstadt:
+      - musterstadt
+      - muster-stadt
+    beispieldorf:
+      - beispieldorf
+  kleinanzeigen_location_id: "l1"
+  kleinanzeigen_radius_km: 15
+  kleinanzeigen_city_slugs:
+    musterstadt: musterstadt
+  immowelt_geo_ids:
+    musterstadt: "AD00000000"
+  immowelt_default_radius_km: 15

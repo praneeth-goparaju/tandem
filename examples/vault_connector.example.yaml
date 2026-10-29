@@ -1,0 +1,47 @@
+# Copy to user/vault_connector.yaml (gitignored) and fill in your own values.
+# Never put real hostnames or paths in this tracked file.
+
+# The Obsidian vault the connector reads and writes. Required.
+vault_path: ~/path/to/your/vault
+
+# The public HTTPS address of the Cloudflare Tunnel that points at the
+# connector. Required.
+public_url: https://vault.example.com
+
+# Where the connector keeps its own state (never inside the vault). Created
+# with mode 0700. Default: ~/connector-data
+# data_dir: ~/connector-data
+
+# Redirect addresses the connector accepts when claude.ai signs in.
+# Default: the two below.
+# allowed_redirect_uris:
+#   - https://claude.ai/api/mcp/auth_callback
+#   - https://claude.com/api/mcp/auth_callback
+
+# The Apple Reminders list that connector-down and failed-sign-in alerts go to.
+# Default: Family
+# alert_lists:
+#   household: Family
+
+# Which Apple integrations are on. Each one is off when its key is missing.
+# Use the named backend to turn one on, or off. The switches choose the tools:
+# with every integration off the connector serves only the 9 vault tools on
+# /mcp and 6 on /mcp/limited, and each one turned on adds its own tools.
+# Reminders also carries the sign-in and health alerts; with it off they are
+# only written to the log.
+# integrations:
+#   reminders: eventkit   # eventkit or off
+#   calendar: caldav      # caldav or off
+#   mail: imap            # imap or off
+#   contacts: carddav     # carddav or off
+
+# Time zone for today's daily note and open items, for reminders and alert
+# quiet hours, and for calendar times given without an offset. Left empty, the
+# connector uses user.timezone from profile.yaml, or, without that, this Mac's
+# own zone. Fill it in (for example America/New_York) only when the connector
+# must run in another zone than your profile. render-launchd puts the zone it
+# resolves into TZ and TIMEZONE of every job, and doctor prints it.
+timezone:
+
+# The port the connector listens on, on 127.0.0.1 only. Default: 8788
+# port: 8788

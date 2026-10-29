@@ -1,0 +1,17 @@
+version: 2
+updates:
+  # Python deps (pyproject.toml) — security + version updates.
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      python-minor-patch:
+        update-types: [minor, patch]
+
+  # Keep GitHub Actions pinned versions current (supply-chain hygiene).
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly

@@ -1,0 +1,60 @@
+# Orchestration modes — which agents run, in what order, on what schedule.
+#
+# Each mode has three optional stage types:
+#   pre        — run sequentially before anything else (e.g. a triage agent)
+#   parallel   — run concurrently (asyncio.gather)
+#   sequential — run one after another, AFTER parallel completes
+#
+# Optional:
+#   schedule   — APScheduler-compatible cron string. Omit for manual-only modes.
+#
+# A mode whose last sequential agent is the private chat agent (`chat: private`,
+# here `alfred_private`) ends with a closing run: the runs before it store
+# findings and proposals but cannot post, and the closing run writes the morning
+# message of each place from them. A mode without one (scout, the other manual
+# solo modes) lets its agents post under Alfred's name to their own place.
+#
+# Add modes in user/modes.yaml to override these defaults without editing the
+# repo-shipped file. user/modes.yaml wins by mode name.
+#
+# Cron string reference: "minute hour day_of_month month day_of_week"
+
+modes:
+  # ---- Scheduled modes — starter kit (area-owner shape) ---------------------
+  # The starter kit schedules the housekeeping pass, discovery and the closing
+  # run in the morning, and the follow-up run at night. Opt-in services such as
+  # housing stay manual until configured in user/profile.yaml.
+
+  all_morning:
+    schedule: "0 7 * * *"
+    pre: [housekeeping]
+    parallel: [discovery]
+    sequential: [alfred_private]
+
+  night:
+    # The night shift: the follow-up run works every open loop. A Mac asleep
+    # at 23:00 runs it on waking until 04:30 (19800 seconds), then skips it.
+    schedule: "0 23 * * *"
+    misfire_grace_seconds: 19800
+    sequential: [follow_up]
+
+  scout:
+    # Hourly except 7 AM (collision with all_morning). Discovery only — the
+    # housekeeping pass and the closing run belong to full cycles (all_morning
+    # or user-defined full cycles), not to every hourly sweep.
+    schedule: "0 0-6,8-23 * * *"
+    parallel: [discovery]
+
+  # ---- Manual-trigger modes --------------------------------------------------
+
+  housekeeping_solo:
+    sequential: [housekeeping]
+
+  closing_solo:
+    sequential: [alfred_private]
+
+  discovery_solo:
+    sequential: [discovery]
+
+  housing_solo:
+    sequential: [housing]

@@ -1,0 +1,2 @@
+this line is not json
+{"type":"user","message":{"role":"user","content":"valid after broken"},"timestamp":"2026-10-14T07:00:00Z","cwd":"/home/user/brain","isSidechain":false,"entrypoint":"cli"}
