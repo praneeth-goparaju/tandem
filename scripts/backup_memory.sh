@@ -91,11 +91,14 @@ on_exit() {
 trap on_exit EXIT
 
 file_uid() {
-  stat -f '%u' "$1" 2>/dev/null || stat -c '%u' "$1"
+  # GNU stat first: on Linux `stat -f` means file-system status, prints that
+  # to stdout and only then fails, so trying it first corrupts the result.
+  # BSD stat (macOS) rejects -c without printing anything to stdout.
+  stat -c '%u' "$1" 2>/dev/null || stat -f '%u' "$1"
 }
 
 file_mode() {
-  stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1"
+  stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"
 }
 
 require_private_file() {
