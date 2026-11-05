@@ -39,7 +39,7 @@ garmin = [
     "garminconnect>=0.3.11,<0.4",
 ]
 dev = [
-    "pytest>=8.0",
+    "pytest>=9.2.0",
     # Pin ruff to a minor range: an unbounded `>=` lets CI silently pick up a
     # newer ruff that adds/strengthens lint rules, turning a green build red
     # with zero code changes (non-reproducible CI). Bump deliberately.
