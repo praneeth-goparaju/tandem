@@ -28,7 +28,8 @@
 
 The front door is the **vault connector**: a small server on your Mac that lets
 your Claude chats, on the phone or the web, search, read and add to the vault.
-It works under fixed rules, and anything larger waits for your Approve tap. On
+It works under fixed rules, and anything larger waits for your approval, which
+Claude asks for with an Approve/Skip question card. On
 top of it you can run an **agent daemon** that works through scheduled runs,
 connect **Slack**, and turn on **Apple Reminders, Calendar, mail and contacts**.
 
@@ -40,7 +41,7 @@ code, the rules, the templates and the examples.
 
 | Part | What it does |
 |---|---|
-| **Vault connector** | Your vault on claude.ai over MCP, through a Cloudflare Tunnel, with its own sign-in (a password and a six-digit code). Two endpoints: "Vault" for your own chats and "Vault, limited" for scheduled tasks. No tool deletes or moves a note, sends anything or runs a command. Small edits run at once, larger ones wait for your Approve tap, every call is logged, and every edit can be undone. |
+| **Vault connector** | Your vault on claude.ai over MCP, through a Cloudflare Tunnel, with its own sign-in (a password and a six-digit code). Two endpoints: "Vault" for your own chats and "Vault, limited" for scheduled tasks. No tool deletes or moves a note, sends anything or runs a command. Small edits run at once, larger ones wait for your approval, which Claude asks for with an Approve/Skip question card, every call is logged, and every edit can be undone. |
 | **Starter vault** | `init-vault` creates a vault from the shipped templates: the rule file, the writing and capture rules, a daily note template and the open-item format the connector writes. |
 | **Agent daemon** (optional) | Agents written in Markdown, scheduled in YAML, each run as a Claude Code session through the Claude Agent SDK on your subscription. They all speak as one assistant, Alfred. Anything that reaches the world goes through an action queue with approvals. |
 | **Slack** (optional) | A shared channel and a private one. Every morning one message per thing, with buttons; every night a follow-up run that works through what was left open. |

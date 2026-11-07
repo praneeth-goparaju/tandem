@@ -15,7 +15,8 @@ Every tool call is written to the audit log with a short id of the token
 call is cancelled: a call runs to its end once it has started, so a cancel
 never lets a second write start while the first is still writing.
 
-An edit is held for the owner's Approve tap when, in the last 30 minutes,
+An edit is held for the owner's approval (Claude asks for it with an
+Approve/Skip question card) when, in the last 30 minutes,
 ``mail_read`` or ``mail_search`` ran with the same token or in the same
 library session. The token counts too because the 2026-07-28 protocol has no
 sessions, so a mail read holds edits in every chat signed in with that token.

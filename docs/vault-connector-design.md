@@ -18,9 +18,9 @@ vault stays on the owner's own Mac; nothing is copied to a server.
 | Public address | A subdomain of the owner's own domain on Cloudflare, written `<name>.example.com` here, reached through a Cloudflare Tunnel. Nothing is opened on the home router. |
 | Users | Only the owner signs in. |
 | Scope | A fixed set of tools. No tool runs commands. |
-| Never | No tool deletes or moves a note, deletes a reminder or event, or sends mail or messages. No tool replaces or empties a note without the owner's Approve tap, and every edit can be undone for 90 days. |
+| Never | No tool deletes or moves a note, deletes a reminder or event, or sends mail or messages. No tool replaces or empties a note without the owner's approval, which Claude asks for with an Approve/Skip question card, and every edit can be undone for 90 days. |
 | Approvals | claude.ai's per-tool setting "Needs approval" puts an Approve button in chat. The owner taps it; the model cannot. |
-| Edits | Small edits run without a tap; larger or sensitive ones wait for the Approve button (section 4). |
+| Edits | Small edits run without a tap; larger or sensitive ones wait for the owner's approval, which Claude asks for with an Approve/Skip question card (section 4). |
 
 Deployment values (hostname, vault path) are in the private `user/vault_connector.yaml`;
 the password hash, the TOTP secret, tokens, the undo store and the audit log are in the
@@ -98,7 +98,7 @@ could hold message-sending actions. An unattended chat that wants something risk
 creates an open item in `Actions/` instead; the owner does it in their own chat.
 
 **Never offered:** deleting or moving notes, replacing or emptying a note without the
-owner's Approve tap, deleting reminders or events, sending anything, running commands.
+owner's approval (which Claude asks for with an Approve/Skip question card), deleting reminders or events, sending anything, running commands.
 
 ### 3.5 Rules enforced in code
 
@@ -150,7 +150,8 @@ too slow to answer in time.
    more than a quarter of the note, does not touch a heading, does not change frontmatter
    other than `status` in `Actions/` notes, is outside the protected paths, and fewer than
    20 edits have run in the last hour.
-3. **Held for the Approve button** (`vault_edit_confirm`) otherwise, and also for every edit
+3. **Held for the owner's approval** (Claude asks with an Approve/Skip question card,
+   then calls `vault_edit_confirm`) otherwise, and also for every edit
    in a chat that has read mail in the last 30 minutes, because that is where planted
    instructions come from.
 4. **Undo.** The replaced text goes to a separate undo store (owner-only file permissions,

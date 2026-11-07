@@ -58,7 +58,8 @@ the calendar, read mail and search contacts.
 
 On neither endpoint can a tool delete or move a note, delete a reminder or
 event, send mail or messages, or run a command. No tool replaces or empties a
-note without the owner's Approve tap, and every edit can be undone for 90 days. No tool
+note without the owner's approval, which Claude asks for with an Approve/Skip
+question card, and every edit can be undone for 90 days. No tool
 writes to `CLAUDE.md`, `Instructions/`, `Brain Agents/`, a dot folder, or any
 path outside the vault; paths are checked after symlinks are resolved.
 
