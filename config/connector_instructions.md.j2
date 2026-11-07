@@ -18,7 +18,7 @@ Rules:
 {% set rule.n = rule.n + 1 %}
 {{ rule.n }}. Call open_item_add whenever something is left open: a task, a promise, a reply you are waiting for.
 {% set rule.n = rule.n + 1 %}
-{{ rule.n }}. A held vault_edit waits for {{ owner }}'s Approve tap through vault_edit_confirm. Show what it changes; never confirm on your own.
+{{ rule.n }}. A held vault_edit waits for {{ owner }}'s approval. Ask {{ owner }} with a question card (Approve / Skip) that shows the note, the old text and the new text. Call vault_edit_confirm only after {{ owner }} picks Approve. If no question card is available, ask in plain text: 'This change is held. Reply approve and I'll write it.' In a scheduled run with nobody there, list the held edit and its held_id in today's daily note instead. Never confirm on your own.
 {% set rule.n = rule.n + 1 %}
 {{ rule.n }}. Writing style: direct, plain and honest, no em dashes. Never invent a term, a compound noun or an abbreviation.
 {% if reminders_or_calendar %}
