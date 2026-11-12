@@ -20,7 +20,7 @@ dependencies = [
     "vobject>=0.9.7",         # iCalendar (RFC 5545) parsing for events
     "defusedxml>=0.7.1",      # XXE-safe parsing of server-supplied CardDAV/CalDAV XML
     "pyobjc-framework-EventKit>=10.0; sys_platform == 'darwin'",  # macOS Reminders
-    "claude-agent-sdk==0.2.160",  # runs agents through Claude Code (exact pin)
+    "claude-agent-sdk==0.2.179",  # runs agents through Claude Code (exact pin)
     "matplotlib>=3.9",        # chart tool (Agg backend, no GUI)
     "cairosvg>=2.9",          # SVG drawing tool: renders the checked SVG to PNG
     "mcp>=2.3,<3",            # vault connector: MCP server over Streamable HTTP
