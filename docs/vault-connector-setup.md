@@ -265,6 +265,11 @@ Check that the item is in the Keychain. It must print `found`.
 security find-generic-password -s brain-icloud-app-password -a <apple-id> > /dev/null && echo found
 ```
 
+Run the two commands below in the Terminal app itself, never in the terminal pane
+of a coding assistant or in a chat with one: such a tool reads what the command
+prints, and `totp-setup` prints the secret behind the six-digit code. If that
+happens, run `totp-setup` again in the Terminal app; the old secret stops working.
+
 Set the sign-in password. The command asks twice. Use a long password of at least
 16 characters (a passphrase of four or five words is good). You type it at the
 prompt; it is stored only as a hash.
@@ -289,11 +294,12 @@ when it restores windows.
 password and the code are set, `vault_path` exists and is not inside the data
 folder, `public_url` is https, the instructions render, the daily note template
 exists in the vault, and the private folder is readable by you only. It also
-prints the integrations that are on and the time zone in use. On a working
-install it ends with `PASS — all checks green` and shows six lines: five checks
-with `✓` and one `i check_connector_integrations (info)` line naming the
-integrations that are on and the time zone, for example `time zone
-America/New_York (from profile.yaml)`. A `!` line names what is still missing,
+prints the integrations that are on and the time zone in use, and the addresses
+the Cloudflare rule must cover. On a working install it ends with
+`PASS — all checks green` and shows seven lines: five checks with `✓`, one
+`i check_connector_people (info)` line naming the addresses, and one
+`i check_connector_integrations (info)` line naming the integrations that are on
+and the time zone, for example `time zone America/New_York (from profile.yaml)`. A `!` line names what is still missing,
 such as the sign-in or the daily note template. Without `--connector`, `doctor`
 also checks the agent daemon's settings (`.env`, `VAULT_PATH` and the like),
 which a connector-only install does not have, and fails without them.
@@ -568,3 +574,88 @@ Security, WAF, custom rules, and switch the rule from section 3a off (do not del
 it). Do this if connector traffic from claude.ai stops arriving. The login and
 rate limits stay in place. Switch the rule on again once you know claude.ai's
 current address range.
+
+## 9. A second person
+
+One connector can serve more than one person. Each person signs in with their own
+password and code at their own pair of addresses, gets their own tools, rules and
+daily notes, and every call is recorded under their key in the audit log.
+
+**Settings.** Add a `people` section to `vault_connector.yaml` (the shipped example
+has one, commented out). Keep yourself on the empty prefix, so your addresses stay
+`/mcp` and `/mcp/limited` and your sign-in keeps working without a new one:
+
+```yaml
+people:
+  alex:
+    name: Alex
+    prefix: ""
+  sam:
+    name: Sam
+    prefix: sam
+    instructions: connector_instructions.sam.yaml
+    daily_notes_dir: "01 - Daily Notes/Sam"
+    daily_note_template: "Daily Note - Sam.md"
+    icloud_apple_id: sam@example.com
+    reminder_lists: [Family, Shopping]
+```
+
+`sam` is then served at `/sam/mcp` and `/sam/mcp/limited`. Create the template
+`11 - Templates/Daily Note - Sam.md` in the vault and the instructions file
+`connector_instructions.sam.yaml` in your private folder; without `owner_name` in it,
+the rules name the person by `name`. `reminder_lists` and `calendars` limit the
+lists and calendars that person may use; leave them out to allow all.
+`exclude_tools` takes tool names that person is not served. Reminders always go
+through the Apple account signed in on this Mac.
+
+**Their iCloud account.** With `icloud_apple_id`, mail, calendar and contacts use
+that person's account. They make an app-specific password at account.apple.com,
+and it goes into this Mac's login Keychain under their Apple ID, typed at the
+prompt, never into a chat or a file:
+
+```bash
+security add-generic-password -s brain-icloud-app-password -a sam@example.com -w
+```
+
+When their iCloud Mail address differs from the Apple ID, add it as
+`icloud_imap_user`. Until the Keychain item exists their mail, calendar and
+contacts tools answer that the account is not signed in on this Mac yet.
+
+**Their password and code.** With more than one person, these commands need
+`--person`:
+
+```bash
+./.venv/bin/python -m src.brain.connector set-password --person sam
+./.venv/bin/python -m src.brain.connector totp-setup --person sam
+```
+
+Run both in the Terminal app, as in section 4, with that person at the keyboard:
+they type their own password and add the `otpauth://` address to their own
+authenticator app.
+
+`revoke-all --person sam` signs only that person out; `revoke-all` alone signs
+everyone out. Restart the connector afterwards (section 8).
+
+**Cloudflare.** The WAF rule from section 3a must cover every address that ends
+in `/mcp` or `/mcp/limited`, not only those that start with `/mcp`. Change its
+expression to:
+
+```
+(http.request.uri.path contains "/mcp" and not ip.src in {160.79.104.0/21})
+```
+
+`./.venv/bin/python -m src.cli doctor --connector` prints every address the rule
+must cover, says for each person whether a password and a code secret are set,
+and whether the Keychain holds their app password.
+
+**Their Claude account.** On that person's own claude.ai account, add the two
+connectors as in section 6, with their addresses, for example
+`https://<name>.example.com/sam/mcp` as "Vault" and
+`https://<name>.example.com/sam/mcp/limited` as "Vault, limited", and set the same
+"Needs approval" permissions. They sign in with their own password and code. A
+token of one person is refused at the other's addresses, and an edit held in one
+person's chat can be confirmed only from that person's chat.
+
+**Removing a person.** Take them out of `people` and restart. Their tokens are then
+refused at every address; `revoke-all --person <key>` before you remove them also
+deletes the tokens.

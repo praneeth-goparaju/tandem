@@ -16,6 +16,7 @@ CONNECTOR_ONLY = {
     "check_private_configuration_permissions",
     "check_connector_config",
     "check_connector_sign_in",
+    "check_connector_people",
     "check_connector_instructions",
     "check_connector_integrations",
     "check_connector_daily_note_template",

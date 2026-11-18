@@ -9,6 +9,12 @@ edit, which ``undo`` checks before putting ``old`` back. ``held`` has one row
 per edit that the rules held for the Approve button, with the hash the note
 had when the chat read it.
 
+Both tables carry the key of the person whose chat made the edit (schema
+version 2). The edit limit is counted per person, and a held edit can be
+confirmed only by its person. A file from version 1 gets the ``person``
+column with ``ALTER TABLE`` when it is opened; ``adopt`` gives its rows, which
+have the person ``''``, to the person with the empty address prefix.
+
 Ids are random URL-safe strings, never counters, so one id says nothing about
 another. Times are stored in UTC as ISO text. Every call opens its own
 connection and runs in one transaction. Rows older than 90 days are removed by
@@ -28,7 +34,9 @@ from pathlib import Path
 
 KEEP_FOR = timedelta(days=90)
 _FILE_MODE = 0o600
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
+_PERSON_TABLES = ("edits", "held")
+_DEFAULT_PERSON = "owner"
 _SCHEMA = (
     """
     CREATE TABLE IF NOT EXISTS edits (
@@ -38,7 +46,8 @@ _SCHEMA = (
         new TEXT NOT NULL,
         hash_after TEXT NOT NULL,
         start INTEGER NOT NULL,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        person TEXT NOT NULL DEFAULT ''
     )
     """,
     "CREATE INDEX IF NOT EXISTS edits_created_at ON edits (created_at)",
@@ -50,7 +59,8 @@ _SCHEMA = (
         new TEXT NOT NULL,
         expected_hash TEXT NOT NULL,
         reason TEXT NOT NULL,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        person TEXT NOT NULL DEFAULT ''
     )
     """,
     "CREATE INDEX IF NOT EXISTS held_created_at ON held (created_at)",
@@ -66,6 +76,7 @@ class UndoRow:
     hash_after: str
     created_at: datetime
     start: int
+    person: str = ""
 
 
 @dataclass
@@ -77,6 +88,7 @@ class HeldRow:
     expected_hash: str
     reason: str
     created_at: datetime
+    person: str = ""
 
 
 def _stamp(when: datetime) -> str:
@@ -104,6 +116,10 @@ class UndoStore:
         with self._transaction() as conn:
             for statement in _SCHEMA:
                 conn.execute(statement)
+            for table in _PERSON_TABLES:
+                columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+                if "person" not in columns:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN person TEXT NOT NULL DEFAULT ''")
             conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
 
     @contextmanager
@@ -111,14 +127,38 @@ class UndoStore:
         with closing(sqlite3.connect(self.db_path)) as conn, conn:
             yield conn
 
-    def record(self, rel: str, old: str, new: str, hash_after: str, start: int) -> str:
-        """Record an edit that ran and return its id."""
+    def adopt(self, root_person: str) -> None:
+        """Give edits and held edits that belong to nobody to ``root_person``.
+
+        Rows of a version 1 file have the person ``''``. When ``root_person`` is
+        not the single owner of a connector without people, that owner's rows
+        become ``root_person``'s too. Safe to run at every start.
+        """
+        owners = ("", _DEFAULT_PERSON) if root_person != _DEFAULT_PERSON else ("",)
+        marks = ", ".join("?" for _ in owners)
+        with self._transaction() as conn:
+            for table in _PERSON_TABLES:
+                conn.execute(
+                    f"UPDATE {table} SET person = ? WHERE person IN ({marks})",  # noqa: S608 - fixed table names and "?" marks only
+                    (root_person, *owners),
+                )
+
+    def record(
+        self,
+        rel: str,
+        old: str,
+        new: str,
+        hash_after: str,
+        start: int,
+        person: str = _DEFAULT_PERSON,
+    ) -> str:
+        """Record an edit that ``person``'s chat ran and return its id."""
         edit_id = _new_id()
         with self._transaction() as conn:
             conn.execute(
-                "INSERT INTO edits (edit_id, rel, old, new, hash_after, start, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (edit_id, rel, old, new, hash_after, start, _now()),
+                "INSERT INTO edits (edit_id, rel, old, new, hash_after, start, created_at, person)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (edit_id, rel, old, new, hash_after, start, _now(), person),
             )
         return edit_id
 
@@ -126,7 +166,7 @@ class UndoStore:
         """Return the edit with ``edit_id``; raises ``KeyError`` if there is none."""
         with self._transaction() as conn:
             row = conn.execute(
-                "SELECT edit_id, rel, old, new, hash_after, created_at, start"
+                "SELECT edit_id, rel, old, new, hash_after, created_at, start, person"
                 " FROM edits WHERE edit_id = ?",
                 (edit_id,),
             ).fetchone()
@@ -140,16 +180,26 @@ class UndoStore:
             hash_after=row[4],
             created_at=datetime.fromisoformat(row[5]),
             start=row[6],
+            person=row[7],
         )
 
-    def hold(self, rel: str, old: str, new: str, expected_hash: str, reason: str) -> str:
-        """Keep an edit for the Approve button and return its held id."""
+    def hold(
+        self,
+        rel: str,
+        old: str,
+        new: str,
+        expected_hash: str,
+        reason: str,
+        person: str = _DEFAULT_PERSON,
+    ) -> str:
+        """Keep ``person``'s edit for their Approve button and return its held id."""
         held_id = _new_id()
         with self._transaction() as conn:
             conn.execute(
-                "INSERT INTO held (held_id, rel, old, new, expected_hash, reason, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (held_id, rel, old, new, expected_hash, reason, _now()),
+                "INSERT INTO held"
+                " (held_id, rel, old, new, expected_hash, reason, created_at, person)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (held_id, rel, old, new, expected_hash, reason, _now(), person),
             )
         return held_id
 
@@ -161,7 +211,7 @@ class UndoStore:
         """
         with self._transaction() as conn:
             row = conn.execute(
-                "SELECT held_id, rel, old, new, expected_hash, reason, created_at"
+                "SELECT held_id, rel, old, new, expected_hash, reason, created_at, person"
                 " FROM held WHERE held_id = ?",
                 (held_id,),
             ).fetchone()
@@ -175,6 +225,7 @@ class UndoStore:
             expected_hash=row[4],
             reason=row[5],
             created_at=datetime.fromisoformat(row[6]),
+            person=row[7],
         )
 
     def drop_held(self, held_id: str) -> None:
@@ -182,11 +233,12 @@ class UndoStore:
         with self._transaction() as conn:
             conn.execute("DELETE FROM held WHERE held_id = ?", (held_id,))
 
-    def edits_since(self, since: datetime) -> int:
-        """Count the edits that ran at or after ``since``."""
+    def edits_since(self, since: datetime, person: str = _DEFAULT_PERSON) -> int:
+        """Count the edits of ``person``'s chats that ran at or after ``since``."""
         with self._transaction() as conn:
             row = conn.execute(
-                "SELECT COUNT(*) FROM edits WHERE created_at >= ?", (_stamp(since),)
+                "SELECT COUNT(*) FROM edits WHERE created_at >= ? AND person = ?",
+                (_stamp(since), person),
             ).fetchone()
         return int(row[0])
 

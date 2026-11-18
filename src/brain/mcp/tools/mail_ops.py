@@ -124,9 +124,14 @@ def _archive_message_sync(
     uid: str,
     mailbox: str = "INBOX",
     expected_snapshot: dict[str, str] | None = None,
+    apple_id: str | None = None,
+    imap_user: str | None = None,
 ) -> str:
     mailbox = validate_mailbox_name(mailbox)
-    provider = _get_provider(provider_name)
+    if apple_id is None:
+        provider = _get_provider(provider_name)
+    else:
+        provider = _get_provider(provider_name, apple_id=apple_id, imap_user=imap_user)
     with _imap_session(provider) as m:
         _select_mailbox(m, mailbox, readonly=False)
         return _archive_selected(m, provider, provider_name, uid, mailbox, expected_snapshot)
@@ -254,10 +259,21 @@ async def archive_message(
     uid: str,
     mailbox: str = "INBOX",
     expected_snapshot: dict[str, str] | None = None,
+    *,
+    apple_id: str | None = None,
+    imap_user: str | None = None,
 ) -> str:
-    """Archive a message without running blocking IMAP calls on the event loop."""
+    """Archive a message without running blocking IMAP calls on the event loop.
+
+    ``apple_id`` and ``imap_user`` pick an iCloud account other than the one in
+    the environment.
+    """
+    if apple_id is None:
+        return await asyncio.to_thread(
+            _archive_message_sync, provider_name, uid, mailbox, expected_snapshot
+        )
     return await asyncio.to_thread(
-        _archive_message_sync, provider_name, uid, mailbox, expected_snapshot
+        _archive_message_sync, provider_name, uid, mailbox, expected_snapshot, apple_id, imap_user
     )
 
 

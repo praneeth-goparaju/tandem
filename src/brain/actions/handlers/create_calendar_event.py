@@ -100,17 +100,28 @@ def _calendar_display_name(calendar: Any) -> str:
     return str(getattr(calendar, "name", "") or "")
 
 
+def matching_calendars(cals: list[Any], name: str) -> list[Any]:
+    """The calendars ``name`` picks: the one whose name it is, ignoring case and outer spaces,
+    or else every calendar whose name contains it."""
+    wanted = name.strip().casefold()
+    exact = [c for c in cals if _calendar_display_name(c).strip().casefold() == wanted]
+    if exact:
+        return exact[:1]
+    return [c for c in cals if wanted in _calendar_display_name(c).casefold()]
+
+
 def _pick_calendar(client, name_filter: str):
+    """The calendar ``name_filter`` names exactly, else the one calendar containing it.
+
+    Returns None when no calendar, or more than one, contains the text.
+    """
     principal = client.principal()
     cals = principal.calendars()
     if not cals:
         return None
     if name_filter:
-        f = name_filter.strip().lower()
-        for c in cals:
-            if f in _calendar_display_name(c).lower():
-                return c
-        return None
+        found = matching_calendars(cals, name_filter)
+        return found[0] if len(found) == 1 else None
     # Default: prefer the user's primary writable calendar. iCloud accounts
     # often list a shared read-only "Home" calendar first in the principal
     # listing — picking cals[0] blindly produces a 403 Forbidden on PUT.
@@ -123,7 +134,7 @@ def _pick_calendar(client, name_filter: str):
     return cals[0]
 
 
-def _execute_sync(payload: dict[str, Any]) -> dict[str, Any]:
+def _execute_sync(payload: dict[str, Any], apple_id: str | None = None) -> dict[str, Any]:
     from src.brain.mcp.tools._icloud import ICloudNotConfigured, caldav_client
 
     for field in ("summary", "start", "end"):
@@ -131,12 +142,17 @@ def _execute_sync(payload: dict[str, Any]) -> dict[str, Any]:
             return {"ok": False, "result": f"missing {field}"}
 
     try:
-        client = caldav_client()
+        client = caldav_client() if apple_id is None else caldav_client(apple_id)
     except ICloudNotConfigured as e:
         return {"ok": False, "result": str(e)}
 
-    cal = _pick_calendar(client, payload.get("calendar_name") or "")
+    name = str(payload.get("calendar_name") or "")
+    cal = _pick_calendar(client, name)
     if cal is None:
+        found = matching_calendars(client.principal().calendars() or [], name) if name.strip() else []
+        if len(found) > 1:
+            names = ", ".join(_calendar_display_name(c) for c in found)
+            return {"ok": False, "result": f"more than one calendar matches {name.strip()}: {names}"}
         return {"ok": False, "result": "no matching calendar found"}
 
     action_id = str(payload.get("_action_id") or "").strip()
@@ -167,5 +183,6 @@ def _execute_sync(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def execute(payload: dict[str, Any]) -> dict[str, Any]:
-    return await asyncio.to_thread(_execute_sync, payload)
+async def execute(payload: dict[str, Any], *, apple_id: str | None = None) -> dict[str, Any]:
+    """Create the event; ``apple_id`` picks an iCloud account other than the environment's."""
+    return await asyncio.to_thread(_execute_sync, payload, apple_id)

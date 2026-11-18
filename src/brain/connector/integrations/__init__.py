@@ -32,7 +32,7 @@ INTEGRATIONS: tuple[Integration, ...] = (
 
 def build_tools(config: ConnectorConfig) -> list[ToolDef]:
     """The vault tools plus the tools of each integration that is on."""
-    built = vault_tools()
+    built = vault_tools(tuple(person.key for person in config.people))
     for integration in INTEGRATIONS:
         if integration.enabled(config):
             built.extend(integration.tools(config))

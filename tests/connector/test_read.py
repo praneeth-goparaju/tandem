@@ -216,3 +216,33 @@ def test_list_folder_outside_vault_refused(vault: Path) -> None:
 def test_list_folder_missing_raises(vault: Path) -> None:
     with pytest.raises(FileNotFoundError):
         list_folder(vault, "No Such Folder")
+
+
+def test_read_hidden_file_refused(vault: Path) -> None:
+    (vault / ".claude").mkdir(exist_ok=True)
+    (vault / ".claude" / "settings.local.json").write_text("{}\n", encoding="utf-8")
+
+    with pytest.raises(PathRefused, match="hidden files and folders cannot be read"):
+        read_note(vault, ".claude/settings.local.json")
+
+
+def test_list_hidden_folder_refused(vault: Path) -> None:
+    (vault / ".obsidian").mkdir(exist_ok=True)
+
+    with pytest.raises(PathRefused):
+        list_folder(vault, ".obsidian")
+
+
+def test_read_symlink_to_hidden_file_refused(vault: Path) -> None:
+    (vault / ".hidden").mkdir()
+    (vault / ".hidden" / "x.md").write_text("secret\n", encoding="utf-8")
+    (vault / "Notes").mkdir(exist_ok=True)
+    (vault / "Notes" / "link.md").symlink_to(vault / ".hidden" / "x.md")
+
+    with pytest.raises(PathRefused):
+        read_note(vault, "Notes/link.md")
+
+
+def test_read_normal_note_still_works_after_hidden_check(vault: Path) -> None:
+    assert read_note(vault, DAILY).text
+    assert search(vault, "x", folder=".claude") == []

@@ -263,3 +263,31 @@ def test_bad_profile_routing_refused(tmp_path: Path, text: str, key: str) -> Non
     profile = _profile(tmp_path, text)
     with pytest.raises(ValueError, match=key.replace("[", r"\[").replace("]", r"\]")):
         load_overlay(None, profile)
+
+
+def test_a_shared_vault_adds_one_rule_naming_the_others() -> None:
+    overlay = InstructionsOverlay(owner_name="Sam")
+    sam_layout = replace(DEFAULT_LAYOUT, daily_notes_dir="01 - Daily Notes/Sam")
+
+    alone = render_instructions(overlay, sam_layout, ALL_OFF)
+    shared = render_instructions(overlay, sam_layout, ALL_OFF, others=("Alex",))
+    three = render_instructions(overlay, sam_layout, ALL_OFF, others=("Alex", "Pat"))
+
+    rule = (
+        "This vault is shared with Alex. You are working with Sam; notes, tasks and daily notes "
+        "of the other person are theirs unless Sam says otherwise."
+    )
+    assert rule not in alone and "shared with" not in alone
+    assert rule in shared
+    assert len(shared.splitlines()) == len(alone.splitlines()) + 1
+    assert "This vault is shared with Alex and Pat." in three
+    assert "`01 - Daily Notes/Sam/YYYY/MM/YYYY-MM-DD.md`" in shared
+
+
+def test_the_example_overlay_fits_with_the_shared_vault_rule() -> None:
+    every = Integrations(reminders=True, calendar=True, mail=True, contacts=True)
+
+    text = render_instructions(load_overlay(EXAMPLE), DEFAULT_LAYOUT, every, others=("Sam",))
+
+    assert len(text.splitlines()) <= MAX_LINES
+    assert EM_DASH not in text

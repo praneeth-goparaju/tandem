@@ -68,7 +68,22 @@ def _keychain_password(apple_id: str) -> str:
     return password
 
 
-def require_creds() -> tuple[str, str]:
+def require_creds(apple_id: str | None = None) -> tuple[str, str]:
+    """The Apple ID and app password to sign in with.
+
+    With ``apple_id`` given, that account's app password comes from the login
+    Keychain and from nowhere else, so another account's password is never
+    used. Without it, the account set in the environment or ``.env`` is used.
+    """
+    if apple_id is not None:
+        password = _keychain_password(apple_id)
+        if password:
+            return apple_id, password
+        raise ICloudNotConfigured(
+            f"no app-specific password for {apple_id} in the login Keychain item "
+            f"{KEYCHAIN_SERVICE}; run `security add-generic-password -s {KEYCHAIN_SERVICE} "
+            f"-a {apple_id} -w` and type the password at the prompt"
+        )
     if ICLOUD_APPLE_ID:
         if ICLOUD_APP_PASSWORD:
             return ICLOUD_APPLE_ID, ICLOUD_APP_PASSWORD
@@ -180,10 +195,11 @@ def _assert_icloud_request(request):
     return request
 
 
-def caldav_client():
+def caldav_client(apple_id: str | None = None):
+    """A CalDAV client for ``apple_id``, or for the account in the environment when None."""
     import caldav
 
-    apple_id, app_pw = require_creds()
+    apple_id, app_pw = require_creds(apple_id)
     # caldav exposes DAVClient through a dynamic module attribute; its package
     # metadata types that attribute as object even though it is a constructor.
     dav_client_cls = cast(Any, caldav.DAVClient)
@@ -204,18 +220,26 @@ def caldav_client():
 
 
 @contextlib.contextmanager
-def imap_session() -> Iterator[imaplib.IMAP4_SSL]:
+def imap_session(
+    apple_id: str | None = None, imap_user: str | None = None
+) -> Iterator[imaplib.IMAP4_SSL]:
     """Context-managed IMAP connection. Auto-LOGIN, guaranteed LOGOUT.
 
     IMAP login uses ICLOUD_IMAP_USER if set (the iCloud Mail mailbox
     address — usually @icloud.com), else falls back to ICLOUD_APPLE_ID.
     Apple's IMAP server rejects non-mailbox-identifier usernames even
-    when the Apple ID + app-specific password are valid.
+    when the Apple ID + app-specific password are valid. With ``apple_id``
+    given, that account signs in as ``imap_user`` or else as ``apple_id``,
+    never with the environment's values.
     """
     import ssl
 
-    apple_id, app_pw = require_creds()
-    imap_user = ICLOUD_IMAP_USER or apple_id
+    if apple_id is not None:
+        apple_id, app_pw = require_creds(apple_id)
+        imap_user = imap_user or apple_id
+    else:
+        apple_id, app_pw = require_creds()
+        imap_user = ICLOUD_IMAP_USER or apple_id
     client = imaplib.IMAP4_SSL(
         ICLOUD_IMAP_HOST, ICLOUD_IMAP_PORT, timeout=NETWORK_TIMEOUT
     )

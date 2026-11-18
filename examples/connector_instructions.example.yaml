@@ -5,7 +5,11 @@
 # text may have at most 60 lines, and no value may contain an em dash or a
 # line break.
 
-# How the model refers to you in the rules.
+# How the model refers to you in the rules. When vault_connector.yaml has a
+# people section, each person has their own copy of this file (named in their
+# instructions key), and a copy without owner_name uses that person's name.
+# With more than one person, one more rule names the others and says their
+# notes, tasks and daily notes are theirs.
 owner_name: "the owner"
 
 # One optional sentence, shown as an extra numbered rule.

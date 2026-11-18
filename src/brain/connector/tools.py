@@ -17,16 +17,19 @@ import logging
 import os
 import unicodedata
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass, field
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
+from functools import partial
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, Protocol, cast
 from zoneinfo import ZoneInfo
 
 import anyio
 
 from src.brain.connector.config import system_timezone
 from src.brain.connector.layout import DEFAULT_LAYOUT, VaultLayout, owner_only_paths
+from src.brain.connector.people import DEFAULT_PERSON_KEY, DEFAULT_PERSON_NAME
 from src.brain.connector.vault import actions, edit, read, write
 from src.brain.connector.vault.coordination import StaleVersion
 from src.brain.connector.vault.edit import EditRefused, EditResult
@@ -38,8 +41,16 @@ from src.gateway.validation import SchemaValidationError, validate_arguments
 
 _logger = logging.getLogger(__name__)
 
-ICloudCall = Callable[[str, dict[str, Any]], str]
-"""Run one iCloud brain tool by name with its arguments and return its text."""
+class ICloudCall(Protocol):
+    """Run one iCloud brain tool by name with its arguments and return its text.
+
+    The third argument, given only when it is not empty, is extra environment
+    for the tool's process: the iCloud account of the person who calls.
+    """
+
+    def __call__(
+        self, name: str, arguments: dict[str, Any], extra_env: Mapping[str, str] | None = ..., /
+    ) -> str: ...
 
 
 @dataclass
@@ -52,11 +63,22 @@ class ToolEnv:
     write_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     zone: ZoneInfo = field(default_factory=lambda: ZoneInfo(system_timezone()))
     layout: VaultLayout = DEFAULT_LAYOUT
+    person_names: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class Call:
+    """What one call knows about who makes it: the person, their layout, lists and calendars."""
+
     mail_read_recently: bool = False
+    person: str = DEFAULT_PERSON_KEY
+    person_name: str = DEFAULT_PERSON_NAME
+    layout: VaultLayout | None = None  # None: the connector's own layout, ``ToolEnv.layout``
+    reminder_lists: tuple[str, ...] | None = None
+    calendars: tuple[str, ...] | None = None
+    icloud_apple_id: str | None = None
+    icloud_imap_user: str | None = None
+    default_icloud: bool = True  # the Mac's own iCloud account is used only at the empty prefix
 
 
 ToolFunc = Callable[[ToolEnv, Call, dict[str, Any]], Awaitable[str]]
@@ -105,13 +127,18 @@ def _note(result: ReadResult, first: str) -> str:
     return f"{first}\npath: {result.path}\nhash: {result.hash}\nlines: {result.total_lines}\n\n{result.text}"
 
 
-HELD_PREFIX = "Edit held for the owner's approval; nothing was written."
+HELD_MARK = "Edit held for "
 HELD_RULE = "Rule that held it: "
 
 
-def _held(rel: str, old: str, new: str, result: EditResult) -> str:
+def held_prefix(name: str) -> str:
+    """The first line of a held edit's text, naming the person who must approve it."""
+    return f"{HELD_MARK}{name}'s approval; nothing was written."
+
+
+def _held(rel: str, old: str, new: str, result: EditResult, name: str) -> str:
     return (
-        f"{HELD_PREFIX}\n"
+        f"{held_prefix(name)}\n"
         f"{HELD_RULE}{result.reason}\n"
         f"Note: {rel}\n"
         f"Old passage:\n{visible(old)}\n"
@@ -180,12 +207,26 @@ async def _vault_list(env: ToolEnv, call: Call, args: dict[str, Any]) -> str:
 
 
 async def _vault_append(env: ToolEnv, call: Call, args: dict[str, Any]) -> str:
+    """Append to a note, by default the caller's daily note, made from the caller's template.
+
+    The owner-only paths come from the connector's layout, never the caller's.
+    """
     now = datetime.now(env.zone)
-    rel = _text_arg(args, "path") or write.daily_note_path(now, env.layout)
+    layout = call.layout or env.layout
+    rel = _text_arg(args, "path") or write.daily_note_path(now, layout)
     heading = _text_arg(args, "heading") or None
     async with env.write_lock:
         result = await asyncio.to_thread(
-            write.append, env.vault, rel, args["text"], heading, now, layout=env.layout
+            partial(
+                write.append,
+                env.vault,
+                rel,
+                args["text"],
+                heading,
+                now,
+                layout=layout,
+                owner_only=owner_only_paths(env.layout),
+            )
         )
     return _note(result, "Added. The note now reads:")
 
@@ -213,9 +254,10 @@ async def _vault_edit(env: ToolEnv, call: Call, args: dict[str, Any]) -> str:
             call.mail_read_recently,
             actions_dir=env.layout.actions_dir,
             owner_only=owner_only_paths(env.layout),
+            person=call.person,
         )
     if result.status == "held":
-        return _held(rel, old, new, result)
+        return _held(rel, old, new, result, call.person_name)
     return _done(result)
 
 
@@ -226,6 +268,8 @@ async def _vault_edit_confirm(env: ToolEnv, call: Call, args: dict[str, Any]) ->
             env.vault,
             env.undo,
             args["held_id"],
+            call.person,
+            {**env.person_names, call.person: call.person_name},
             owner_only=owner_only_paths(env.layout),
         )
     return _done(result)
@@ -244,20 +288,30 @@ async def _vault_undo(env: ToolEnv, call: Call, args: dict[str, Any]) -> str:
 
 
 async def _open_item_add(env: ToolEnv, call: Call, args: dict[str, Any]) -> str:
+    """Add an open item; it belongs to the caller unless ``owner`` names someone else.
+
+    A connector without people writes no owner, as before people existed.
+    """
     status = cast(Literal["next", "waiting"], args["status"])
     due, follow_up = _date_arg(args, "due"), _date_arg(args, "follow_up")
+    named = call.person != DEFAULT_PERSON_KEY
+    owner = (_text_arg(args, "owner") or call.person) if named else None
     async with env.write_lock:
         result = await asyncio.to_thread(
-            actions.open_item_add,
-            env.vault,
-            args["outcome"],
-            status,
-            due,
-            _text_arg(args, "waiting_on") or None,
-            follow_up,
-            _text_arg(args, "source"),
-            datetime.now(env.zone).date(),
-            layout=env.layout,
+            partial(
+                actions.open_item_add,
+                env.vault,
+                args["outcome"],
+                status,
+                due,
+                _text_arg(args, "waiting_on") or None,
+                follow_up,
+                _text_arg(args, "source"),
+                datetime.now(env.zone).date(),
+                owner=owner,
+                assigned_by=call.person if named else None,
+                layout=env.layout,
+            )
         )
     return _note(result, "Open item created:")
 
@@ -379,7 +433,7 @@ _VAULT_TOOLS: tuple[ToolDef, ...] = (
         name="vault_edit",
         description=(
             "Replace one exact passage in a note you have just read, at once when the change is "
-            "small and otherwise held for the owner's approval; it never deletes or moves a note."
+            "small and otherwise held until the person you are working with approves it; it never deletes or moves a note."
         ),
         schema=object_schema(
             {
@@ -457,9 +511,32 @@ _VAULT_TOOLS: tuple[ToolDef, ...] = (
 )
 
 
-def vault_tools() -> list[ToolDef]:
-    """A new list of the vault tools."""
-    return list(_VAULT_TOOLS)
+OWNER_BOTH = "both"
+
+
+def _with_owner(tool: ToolDef, people: tuple[str, ...]) -> ToolDef:
+    """``open_item_add`` with an ``owner`` argument naming each person, or both."""
+    schema = deepcopy(tool.schema)
+    schema["properties"]["owner"] = {
+        "type": "string",
+        "enum": [*people, OWNER_BOTH],
+        "description": "Whose task this is. Default: the person you are working with.",
+    }
+    return replace(tool, schema=schema)
+
+
+def vault_tools(people: tuple[str, ...] = ()) -> list[ToolDef]:
+    """A new list of the vault tools.
+
+    ``people`` are the keys of the people in the settings; with more than one,
+    ``open_item_add`` takes an ``owner``.
+    """
+    if len(people) < 2:
+        return list(_VAULT_TOOLS)
+    return [
+        _with_owner(tool, people) if tool.name == "open_item_add" else tool
+        for tool in _VAULT_TOOLS
+    ]
 
 
 _TARGET_KEYS = (

@@ -1,25 +1,33 @@
-"""The vault connector's web app: two MCP endpoints, sign-in and a health check.
+"""The vault connector's web app: two MCP endpoints per person, sign-in and a health check.
 
 ``build_app`` puts together, in one Starlette app:
 
-- ``/mcp``, the full endpoint, and ``/mcp/limited``, the limited one, each an
-  ``MCPServer`` with its own tools from ``build_tools``. Both use the same OAuth
-  provider, and each accepts only tokens issued for its own address, so a
-  limited token gets 401 at ``/mcp`` and the other way round;
+- for each person in the settings, a full endpoint at ``/<prefix>/mcp`` and a
+  limited one at ``/<prefix>/mcp/limited`` (``/mcp`` and ``/mcp/limited`` for
+  the empty prefix), each an ``MCPServer`` with its own tools from
+  ``build_tools`` less the person's excluded tools, and with the person's own
+  instructions. All use the same OAuth provider, and each accepts only tokens
+  issued for its own address, so a limited token gets 401 at the full address,
+  and one person's token gets 401 at the other's addresses;
 - the OAuth routes (``/authorize``, ``/token``, ``/register``, ``/revoke`` and
   the metadata under ``/.well-known/``) and the sign-in page ``/login``;
 - ``GET /health``, which answers ``ok`` without a token.
 
 Every tool call is written to the audit log with a short id of the token
-(the first 12 hex characters of its SHA-256, never the token), also when the
-call is cancelled: a call runs to its end once it has started, so a cancel
+(the first 12 hex characters of its SHA-256, never the token), a short id of the
+sign-in it belongs to (the same after a token renewal), the person, the address
+used (``full`` or ``limited``) and, for an edit, the held or edit id of the
+result. This also happens when the call is cancelled: a call runs to its end once it has started, so a cancel
 never lets a second write start while the first is still writing.
 
-An edit is held for the owner's approval (Claude asks for it with an
-Approve/Skip question card) when, in the last 30 minutes,
-``mail_read`` or ``mail_search`` ran with the same token or in the same
-library session. The token counts too because the 2026-07-28 protocol has no
-sessions, so a mail read holds edits in every chat signed in with that token.
+An edit is held for the approval of the person whose chat made it (Claude
+asks for it with an Approve/Skip question card), and only that person's chats
+can confirm it, when, in the last 30 minutes,
+``mail_read`` or ``mail_search`` ran with the same sign-in or in the same
+library session. The sign-in counts too because the 2026-07-28 protocol has no
+sessions, so a mail read holds edits in every chat signed in with that sign-in. The
+time of the last mail read is kept in ``auth.db`` under the sign-in's id, so a token
+renewal (every hour) and a restart do not lift the hold.
 
 The connector listens on 127.0.0.1 behind cloudflared, so every request comes
 from a loopback address; ``connector_address`` takes the client's address from
@@ -33,15 +41,16 @@ import hashlib
 import importlib
 import inspect
 import ipaddress
-import json
 import logging
 import os
+import re
 import sqlite3
-import threading
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import AsyncExitStack, asynccontextmanager
 from copy import deepcopy
-from datetime import UTC, datetime, timedelta
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
+from functools import partial
 from typing import Any
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
@@ -65,14 +74,15 @@ from src.brain.atomic_io import atomic_write_text
 from src.brain.connector.audit import AuditLog
 from src.brain.connector.auth.login import login_routes
 from src.brain.connector.auth.provider import VaultOAuthProvider
-from src.brain.connector.auth.store import AuthStore
+from src.brain.connector.auth.store import MAIL_HOLD, AuthStore
 from src.brain.connector.auth.throttle import Throttle
 from src.brain.connector.config import ConnectorConfig
 from src.brain.connector.instructions import load_overlay, render_instructions
 from src.brain.connector.integrations import build_tools
 from src.brain.connector.integrations.apple import icloud_bridge
+from src.brain.connector.people import DEFAULT_PERSON_KEY, Person
 from src.brain.connector.tools import (
-    HELD_PREFIX,
+    HELD_MARK,
     HELD_RULE,
     Call,
     ICloudCall,
@@ -91,9 +101,12 @@ AUTH_DB = "auth.db"
 UNDO_DB = "undo.db"
 AUDIT_DIR = "audit"
 INSTRUCTIONS_FILE = "instructions.md"
+_GENERIC_OWNER = "the owner"
 ALERT_TITLE = "Repeated failed sign-ins to the vault connector"
-MAIL_HOLD = timedelta(minutes=30)
 MAIL_READ_TOOLS = frozenset({"mail_read", "mail_search"})
+DEFAULT_PERSON = "owner"
+_RESULT_ID = re.compile(r"^(?:Done\. )?(?:edit_id|held_id): (\S+)", re.MULTILINE)
+_RESULT_ID_TOOLS = frozenset({"vault_edit", "vault_edit_confirm"})
 CLAUDE_ORIGINS = ("https://claude.ai", "https://claude.com")
 
 
@@ -128,29 +141,33 @@ def token_id(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()[:12]
 
 
-class MailReads:
-    """When each MCP session and each token last read mail."""
+def sign_in_label(sign_in_id: str) -> str:
+    """A short, stable id for a sign-in, kept in the audit log; it does not reveal the stored id."""
+    return hashlib.sha256(sign_in_id.encode()).hexdigest()[:12]
 
-    def __init__(self, clock: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:
-        self._clock = clock
-        self._lock = threading.Lock()
-        self._at: dict[str, datetime] = {}
 
-    def mark(self, keys: Sequence[str]) -> None:
-        with self._lock:
-            now = self._clock()
-            self._at = {k: t for k, t in self._at.items() if now - t < MAIL_HOLD}
-            for key in keys:
-                self._at[key] = now
+def _result_id(text: str) -> str:
+    """The id a tool's text gives after ``edit_id: `` or ``held_id: ``, or an empty string.
 
-    def recent(self, keys: Sequence[str]) -> bool:
-        """True when any of ``keys`` read mail in the last 30 minutes."""
-        with self._lock:
-            now = self._clock()
-            return any(
-                (read_at := self._at.get(key)) is not None and now - read_at < MAIL_HOLD
-                for key in keys
-            )
+    A held edit's text shows the old and new passage before its ``held_id`` line,
+    and a finished edit's text shows the note after its ``edit_id`` line. Either
+    could hold a line that looks like an id, so the last match is taken for a
+    held edit and the first for a finished one.
+    """
+    found = _RESULT_ID.findall(text)
+    if not found:
+        return ""
+    return str(found[-1] if text.startswith(HELD_MARK) else found[0])
+
+
+@dataclass(frozen=True)
+class Caller:
+    """Who a tool call is from: the token, the sign-in it belongs to, the person and the mail-state keys."""
+
+    token_id: str
+    sign_in_id: str
+    person: str
+    keys: tuple[str, ...]
 
 
 def _alert_callback(config: ConnectorConfig) -> Callable[[str], None]:
@@ -202,61 +219,115 @@ def _library_session_id(request_context: Any) -> str | None:
     return session_id if isinstance(session_id, str) and session_id else None
 
 
-def _caller(context: Context[Any, Any]) -> tuple[str, list[str]]:
-    """The token id and the mail-state keys of the request a tool runs in.
+def _caller(
+    context: Context[Any, Any], store: AuthStore, person: str = DEFAULT_PERSON
+) -> Caller:
+    """The token, sign-in, person and mail-state keys of the request a tool runs in.
 
-    The keys are the token and, when there is one, the library's session.
+    The keys are the sign-in and, when there is one, the library's session. The
+    sign-in id and the person are looked up from the token; when the token is
+    not in the store any more, the sign-in id is empty, the key is the token
+    itself and the person is ``person``, the one whose address was called.
     """
     try:
         request_context = context.request_context
     except ValueError:
-        return "none", ["token:none"]
+        return Caller("none", "", person, ("token:none",))
     request = getattr(request_context, "request", None)
     user = request.scope.get("user") if isinstance(request, Request) else None
     token = user.access_token.token if isinstance(user, AuthenticatedUser) else ""
     tid = token_id(token) if token else "none"
-    keys = [f"token:{tid}"]
+    row = store.get_token(token, "access") if token else None
+    sign_in = sign_in_label(row.sign_in_id) if row is not None else ""
+    keys = [f"sign_in:{sign_in}" if sign_in else f"token:{tid}"]
     session_id = _library_session_id(request_context)
     if session_id is not None:
         keys.append(f"session:{session_id}")
-    return tid, keys
+    return Caller(tid, sign_in, row.person if row is not None else person, tuple(keys))
+
+
+def _call(person: Person | None, mail_read_recently: bool) -> Call:
+    """What a tool body is told about the call: the person of the address and the mail hold."""
+    if person is None:
+        return Call(mail_read_recently=mail_read_recently)
+    return Call(
+        mail_read_recently=mail_read_recently,
+        person=person.key,
+        person_name=person.name,
+        layout=person.layout,
+        reminder_lists=person.reminder_lists,
+        calendars=person.calendars,
+        icloud_apple_id=person.icloud_apple_id,
+        icloud_imap_user=person.icloud_imap_user,
+        default_icloud=not person.prefix,
+    )
 
 
 async def _audit(
-    audit: AuditLog, tool: ToolDef, arguments: dict[str, Any], text: str, tid: str
+    audit: AuditLog,
+    tool: ToolDef,
+    arguments: dict[str, Any],
+    text: str,
+    caller: Caller,
+    endpoint: str,
 ) -> None:
     if text.startswith("ERROR:"):
         result = f"error: {text.removeprefix('ERROR:').strip()}"
-    elif text.startswith(HELD_PREFIX):
+    elif text.startswith(HELD_MARK):
         rule = next((line for line in text.splitlines() if line.startswith(HELD_RULE)), "")
         result = f"held: {rule.removeprefix(HELD_RULE)}"
     else:
         result = "ok"
     try:
-        summary = json.dumps(audit_args(arguments), ensure_ascii=False, sort_keys=True, default=str)
+        result_id = _result_id(text) if tool.name in _RESULT_ID_TOOLS else ""
         await anyio.to_thread.run_sync(
-            audit.write, tool.name, audit_target(arguments), result, tid, summary
+            partial(
+                audit.write,
+                tool.name,
+                audit_target(arguments),
+                result,
+                caller.token_id,
+                audit_args(arguments),
+                person=caller.person,
+                sign_in_id=caller.sign_in_id,
+                endpoint=endpoint,
+                result_id=result_id,
+            )
         )
     except Exception:
         _logger.exception("audit line for %s not written", tool.name)
 
 
-def _mcp_tool(tool: ToolDef, env: ToolEnv, audit: AuditLog, mail: MailReads) -> Tool:
+def _mcp_tool(
+    tool: ToolDef,
+    env: ToolEnv,
+    audit: AuditLog,
+    store: AuthStore,
+    endpoint: str,
+    person: Person | None = None,
+) -> Tool:
+    """Wrap ``tool`` for one endpoint; ``person`` is whose address it is (None: the default)."""
+    owner = person.key if person is not None else DEFAULT_PERSON
+
     async def handler(arguments: dict[str, Any], context: Context[Any, Any]) -> CallToolResult:
-        # Shielded: a cancelled call (the owner pressing Stop, or a closed
+        # Shielded: a cancelled call (the person pressing Stop, or a closed
         # response stream) still finishes its write under the write lock and
         # writes its audit line. The cancel takes effect once the call returns.
         with anyio.CancelScope(shield=True):
-            tid, keys = _caller(context)
-            if tool.name in MAIL_READ_TOOLS:
-                mail.mark(keys)
+            caller = _caller(context, store, owner)
+            keys = caller.keys
             text = "ERROR: the call stopped before it finished"
             try:
-                text = await run_tool(
-                    tool, env, arguments, Call(mail_read_recently=mail.recent(keys))
-                )
+                if caller.person != owner:
+                    # The provider already refuses such a token; this is a second lock.
+                    text = "ERROR: this sign-in is not for this address"
+                    return CallToolResult(content=[TextContent(type="text", text=text)], is_error=True)
+                if tool.name in MAIL_READ_TOOLS:
+                    store.mark_mail_read(keys)
+                recent = store.mail_read_recently(keys, MAIL_HOLD)
+                text = await run_tool(tool, env, arguments, _call(person, recent))
             finally:
-                await _audit(audit, tool, arguments, text, tid)
+                await _audit(audit, tool, arguments, text, caller, endpoint)
         failed = text.startswith("ERROR:")
         return CallToolResult(content=[TextContent(type="text", text=text)], is_error=failed)
 
@@ -307,7 +378,9 @@ def build_app(config: ConnectorConfig, *, icloud: ICloudCall = icloud_bridge) ->
     """The connector's whole web app; ``icloud`` runs the iCloud read tools."""
     config.data_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     store = AuthStore(config.data_dir / AUTH_DB)
+    store.adopt(config.root_person.key)
     undo = UndoStore(config.data_dir / UNDO_DB)
+    undo.adopt(config.root_person.key)
     audit = AuditLog(config.data_dir / AUDIT_DIR)
     _housekeeping(audit, undo)
     provider = VaultOAuthProvider(config, store)
@@ -318,27 +391,19 @@ def build_app(config: ConnectorConfig, *, icloud: ICloudCall = icloud_bridge) ->
         icloud=icloud,
         zone=ZoneInfo(config.timezone),
         layout=config.layout,
-    )
-    mail = MailReads()
-    if not config.instructions_overlay.is_file():
-        _logger.warning(
-            "%s is missing; the connector serves its generic rules", config.instructions_overlay
-        )
-    instructions = render_instructions(
-        load_overlay(config.instructions_overlay, config.profile_path),
-        config.layout,
-        config.integrations,
-    )
-    atomic_write_text(
-        config.data_dir / INSTRUCTIONS_FILE,
-        instructions,
-        mode=0o600,
-        preserve_existing_mode=False,
+        person_names={person.key: person.name for person in config.people},
     )
     base = config.public_url.rstrip("/")
     security = _transport_security(config)
 
-    def endpoint(name: str, path: str, chosen: list[ToolDef]) -> tuple[MCPServer[Any], Starlette]:
+    def endpoint(
+        name: str,
+        path: str,
+        chosen: list[ToolDef],
+        access: str,
+        person: Person,
+        instructions: str,
+    ) -> tuple[MCPServer[Any], Starlette]:
         auth = AuthSettings.model_validate(
             {
                 "issuer_url": config.public_url,
@@ -353,36 +418,83 @@ def build_app(config: ConnectorConfig, *, icloud: ICloudCall = icloud_bridge) ->
             instructions=instructions,
             auth_server_provider=provider,
             auth=auth,
-            tools=[_mcp_tool(tool, env, audit, mail) for tool in chosen],
+            tools=[_mcp_tool(tool, env, audit, store, access, person) for tool in chosen],
         )
         return server, server.streamable_http_app(
             streamable_http_path=path, transport_security=security
         )
 
     served = build_tools(config)
-    full, full_app = endpoint("Vault", "/mcp", [tool for tool in served if tool.full])
-    limited, limited_app = endpoint(
-        "Vault, limited", "/mcp/limited", [tool for tool in served if tool.limited]
-    )
+    servers: list[MCPServer[Any]] = []
+    apps: list[Starlette] = []
+    for person in config.people:
+        instructions = _instructions(config, person)
+        mine = [tool for tool in served if tool.name not in person.excluded_tools]
+        suffix = f" ({person.name})" if person.prefix else ""
+        for name, access, chosen in (
+            (f"Vault{suffix}", "full", [tool for tool in mine if tool.full]),
+            (f"Vault, limited{suffix}", "limited", [tool for tool in mine if tool.limited]),
+        ):
+            path = person.path("full" if access == "full" else "limited")
+            server, app = endpoint(name, path, chosen, access, person, instructions)
+            servers.append(server)
+            apps.append(app)
 
     routes: list[BaseRoute] = [
         Route("/health", _health, methods=["GET"]),
         *login_routes(provider, store, throttle, address=connector_address),
     ]
     taken = {"/health", "/login"}
-    for app in (full_app, limited_app):
+    for app in apps:
         for route in app.routes:
-            path = getattr(route, "path", None)
-            if isinstance(path, str) and path not in taken:
-                routes.append(Route(path, endpoint=app))
-                taken.add(path)
+            route_path = getattr(route, "path", None)
+            if isinstance(route_path, str) and route_path not in taken:
+                routes.append(Route(route_path, endpoint=app))
+                taken.add(route_path)
 
     @asynccontextmanager
     async def lifespan(_app: Starlette) -> AsyncIterator[None]:
-        async with full.session_manager.run(), limited.session_manager.run():
+        async with AsyncExitStack() as stack:
+            for server in servers:
+                await stack.enter_async_context(server.session_manager.run())
             yield
 
     return Starlette(routes=routes, lifespan=lifespan)
+
+
+def instructions_file(person: Person) -> str:
+    """The data folder file that keeps ``person``'s rendered instructions."""
+    return INSTRUCTIONS_FILE if not person.prefix else f"instructions.{person.key}.md"
+
+
+def render_person_instructions(config: ConnectorConfig, person: Person) -> str:
+    """Render ``person``'s instructions exactly as the connector serves them.
+
+    An overlay without an ``owner_name`` names the person when the settings name
+    people. When there are other people, one rule names them. Writes nothing, so
+    ``doctor`` can call it to find what would stop the connector from starting.
+    """
+    overlay = load_overlay(person.instructions_overlay, config.profile_path)
+    if person.key != DEFAULT_PERSON_KEY and overlay.owner_name == _GENERIC_OWNER:
+        overlay = replace(overlay, owner_name=person.name)
+    others = tuple(other.name for other in config.people if other.key != person.key)
+    return render_instructions(overlay, person.layout, config.integrations, others=others)
+
+
+def _instructions(config: ConnectorConfig, person: Person) -> str:
+    """Render ``person``'s instructions, keep a copy in the data folder, and return them."""
+    if not person.instructions_overlay.is_file():
+        _logger.warning(
+            "%s is missing; the connector serves its generic rules", person.instructions_overlay
+        )
+    text = render_person_instructions(config, person)
+    atomic_write_text(
+        config.data_dir / instructions_file(person),
+        text,
+        mode=0o600,
+        preserve_existing_mode=False,
+    )
+    return text
 
 
 def use_timezone(name: str) -> None:

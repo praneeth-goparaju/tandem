@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import shutil
+import sqlite3
+import threading
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -619,3 +622,148 @@ def test_undo_restores_and_is_hash_checked(vault: Path, store: UndoStore) -> Non
     assert note.read_bytes() == changed
     with pytest.raises(EditRefused, match="no edit"):
         undo(vault, store, "unknown-id")
+
+
+def _passport(vault: Path, store: UndoStore, person: str, new: str = "- Passport renewed") -> edit.EditResult:
+    note = vault / "Household.md"
+    return apply_edit(
+        vault,
+        store,
+        "Household.md",
+        "- Renew passport",
+        new,
+        _sha(note),
+        REASON,
+        mail_read_recently=False,
+        person=person,
+    )
+
+
+def test_the_hourly_limit_is_counted_per_person(vault: Path, store: UndoStore) -> None:
+    for _ in range(20):
+        store.record("Notes/Other.md", "a", "b", "c" * 64, 0, "alex")
+
+    sam = _passport(vault, store, "sam")
+    assert sam.status == "done"
+    assert store.get(sam.edit_id or "").person == "sam"
+
+    alex = apply_edit(
+        vault,
+        store,
+        "Household.md",
+        "- Passport renewed",
+        "- Passport renewed in May",
+        _sha(vault / "Household.md"),
+        REASON,
+        mail_read_recently=False,
+        person="alex",
+    )
+    assert alex.status == "held"
+    assert alex.reason == "20 edits already ran in the last hour"
+
+
+def test_a_held_edit_is_confirmed_only_by_its_person(vault: Path, store: UndoStore) -> None:
+    note = vault / "Household.md"
+    before = note.read_bytes()
+    held = apply_edit(
+        vault,
+        store,
+        "Household.md",
+        "# Household",
+        "# Admin",
+        _sha(note),
+        "shorter title for the note",
+        mail_read_recently=False,
+        person="sam",
+    )
+    assert held.status == "held" and held.held_id is not None
+    assert store.take_held(held.held_id).person == "sam"
+    names = {"alex": "Alex", "sam": "Sam"}
+
+    with pytest.raises(EditRefused) as refused:
+        confirm_held(vault, store, held.held_id, "alex", names)
+    assert str(refused.value) == "this edit is held for Sam's approval; only Sam can approve it"
+    assert note.read_bytes() == before
+
+    done = confirm_held(vault, store, held.held_id, "sam", names)
+    assert done.status == "done" and done.reason == "approved by Sam"
+    assert store.get(done.edit_id or "").person == "sam"
+
+
+def test_an_edit_by_one_person_can_be_undone_by_the_other(vault: Path, store: UndoStore) -> None:
+    note = vault / "Household.md"
+    original = note.read_bytes()
+    done = _passport(vault, store, "sam")
+
+    undo(vault, store, done.edit_id or "")
+
+    assert note.read_bytes() == original
+
+
+def test_two_people_editing_one_note_at_once_never_lose_a_write(
+    vault: Path, store: UndoStore
+) -> None:
+    note = vault / "Household.md"
+    read_hash = _sha(note)
+    barrier = threading.Barrier(2)
+    outcomes: dict[str, object] = {}
+
+    def edit_as(person: str, old: str, new: str) -> None:
+        barrier.wait()
+        try:
+            outcomes[person] = apply_edit(
+                vault, store, "Household.md", old, new, read_hash, REASON,
+                mail_read_recently=False, person=person,
+            )
+        except StaleVersion as error:
+            outcomes[person] = error
+
+    threads = [
+        threading.Thread(target=edit_as, args=("alex", "- Renew passport", "- Passport renewed")),
+        threading.Thread(
+            target=edit_as, args=("sam", "- Book dentist appointment", "- Dentist booked")
+        ),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    stale = [value for value in outcomes.values() if isinstance(value, StaleVersion)]
+    done = [value for value in outcomes.values() if isinstance(value, edit.EditResult)]
+    assert len(stale) == 1 and len(done) == 1
+    assert "changed after it was read" in str(stale[0])
+    text = note.read_text(encoding="utf-8")
+    assert ("- Passport renewed" in text) != ("- Dentist booked" in text)
+    assert done[0].read_back is not None and done[0].read_back.hash == _sha(note)
+
+
+def test_an_edit_from_before_the_upgrade_can_be_undone(vault: Path, tmp_path: Path) -> None:
+    note = vault / "Household.md"
+    original = note.read_text(encoding="utf-8")
+    edited = original.replace("- Renew passport", "- Passport renewed")
+    note.write_text(edited, encoding="utf-8")
+    db_path = tmp_path / "old-undo.db"
+    with closing(sqlite3.connect(db_path)) as conn, conn:
+        conn.execute(
+            "CREATE TABLE edits (edit_id TEXT PRIMARY KEY, rel TEXT NOT NULL, old TEXT NOT NULL,"
+            " new TEXT NOT NULL, hash_after TEXT NOT NULL, start INTEGER NOT NULL,"
+            " created_at TEXT NOT NULL)"
+        )
+        conn.execute(
+            "CREATE TABLE held (held_id TEXT PRIMARY KEY, rel TEXT NOT NULL, old TEXT NOT NULL,"
+            " new TEXT NOT NULL, expected_hash TEXT NOT NULL, reason TEXT NOT NULL,"
+            " created_at TEXT NOT NULL)"
+        )
+        conn.execute("PRAGMA user_version = 1")
+        conn.execute(
+            "INSERT INTO edits VALUES ('old-edit', 'Household.md', '- Renew passport',"
+            " '- Passport renewed', ?, ?, ?)",
+            (_sha(note), edited.index("- Passport renewed"), datetime.now(UTC).isoformat()),
+        )
+
+    store = UndoStore(db_path)
+    store.adopt("alex")
+    undo(vault, store, "old-edit")
+
+    assert note.read_text(encoding="utf-8") == original

@@ -82,3 +82,20 @@ def test_backend_does_not_surface_private_stderr(tmp_path) -> None:
         CommandBackend(_settings(tmp_path)).invoke("list")
 
     assert "secret" not in str(captured.value)
+
+
+
+def test_extra_environment_reaches_only_that_process(tmp_path, monkeypatch) -> None:
+    _bridge(
+        tmp_path,
+        "import json, os\n"
+        "print(json.dumps({'value': os.environ.get('ICLOUD_APP_PASSWORD')}))\n",
+    )
+    monkeypatch.setenv("ICLOUD_APP_PASSWORD", "alex-secret")
+    backend = CommandBackend(_settings(tmp_path))
+
+    named = backend.invoke("call", {"name": "x"}, environment={"ICLOUD_APP_PASSWORD": ""})
+    usual = backend.invoke("call", {"name": "x"})
+
+    assert named == {"value": ""}
+    assert usual == {"value": "alex-secret"}

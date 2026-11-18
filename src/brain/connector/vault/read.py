@@ -1,7 +1,8 @@
 """Search, read and list notes in the vault.
 
 These are the plain functions behind the ``vault_search``, ``vault_read`` and
-``vault_list`` tools. Every path from a chat goes through ``resolve_in_vault``.
+``vault_list`` tools. Every path from a chat goes through ``resolve_in_vault``; reading and listing use
+``check_readable``, which also refuses hidden paths.
 
 Search is a substring match on lines of Markdown notes. Both the query and each
 line are normalised to NFC and case-folded, so ``führerschein`` finds
@@ -24,7 +25,7 @@ from pathlib import Path, PurePath, PurePosixPath
 
 import yaml
 
-from src.brain.connector.vault.paths import resolve_in_vault
+from src.brain.connector.vault.paths import check_readable, resolve_in_vault
 
 NOTE_SUFFIX = ".md"
 FRONTMATTER_FENCE = "---"
@@ -192,7 +193,7 @@ def read_note(
     """
     if (start is not None and start < 1) or (end is not None and end < 1):
         raise ValueError("start and end are 1-based line numbers")
-    path = resolve_in_vault(vault, rel)
+    path = check_readable(vault, rel)
     if not path.exists():
         if path.with_name(f".{path.name}.icloud").exists():
             raise NotDownloaded(f"{rel} is in iCloud and not downloaded to this Mac yet")
@@ -214,7 +215,7 @@ def list_folder(vault: Path, rel: str = "") -> list[str]:
 
     Names starting with ``.`` are hidden, which also hides iCloud placeholders.
     """
-    path = resolve_in_vault(vault, rel)
+    path = check_readable(vault, rel)
     if not path.is_dir():
         raise FileNotFoundError(rel)
     names = []

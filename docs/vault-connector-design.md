@@ -62,6 +62,24 @@ connector's data folder.
   in the Claude app, because they read text written by strangers. Added as "Vault, limited". No edit,
   undo, update, complete or archive tools.
 
+### 3.3a People
+
+- Without a `people` section there is one person, the owner, at `/mcp` and
+  `/mcp/limited`. With one, each person has a key, a name and an address prefix:
+  `/<prefix>/mcp` and `/<prefix>/mcp/limited`. Exactly one person has the empty
+  prefix; sign-in state, edits and held edits from before people existed belong to
+  that person (`auth.db` and `undo.db` gain a `person` column in place).
+- Pending sign-ins, codes and tokens carry the person; a person's password and code
+  work only at that person's addresses, a token only at the address it was issued
+  for, and a token whose person is no longer in the settings is refused everywhere.
+- Each person gets their own tool list (`exclude_tools`), rules (their overlay plus
+  one rule naming the others), daily notes, allowed Reminders lists and calendars,
+  and iCloud account for mail, calendar and contacts. Reminders use this Mac's
+  Apple account for everyone; Outlook stays with the empty prefix.
+- The write lock, the undo store and the audit log are shared. The edit limit is
+  counted per person, a held edit can be confirmed only by its person, and either
+  person can undo any edit. Open items record `owner` and `assigned_by`.
+
 ### 3.4 Tools
 
 "Setting" is the recommended claude.ai permission for the full connector. The

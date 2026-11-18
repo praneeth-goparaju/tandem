@@ -8,6 +8,7 @@ in the gitignored ``user/vault_connector.yaml``. The shipped example is
 from __future__ import annotations
 
 import os
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,14 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import yaml
 
 from src.brain.connector.layout import DEFAULT_LAYOUT, VaultLayout, load_layout
+from src.brain.connector.people import (
+    DEFAULT_PERSON_KEY,
+    INSTRUCTIONS_OVERLAY_NAME,
+    Person,
+    default_person,
+    load_people,
+    root_person,
+)
 from src.brain.runtime.loader import load_yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
@@ -27,7 +36,6 @@ DEFAULT_REDIRECT_URIS = (
 )
 DEFAULT_PORT = 8788
 PROFILE_NAME = "profile.yaml"
-INSTRUCTIONS_OVERLAY_NAME = "connector_instructions.yaml"
 LOCALTIME = Path("/etc/localtime")
 FALLBACK_TIMEZONE = "UTC"
 _PRIVATE_DIR_MODE = 0o700
@@ -72,6 +80,22 @@ class ConnectorConfig:
         default_factory=lambda: user_dir() / INSTRUCTIONS_OVERLAY_NAME
     )
     profile_path: Path | None = None
+    people: tuple[Person, ...] = ()
+
+    def __post_init__(self) -> None:
+        # The default person follows the layout and overlay, also after dataclasses.replace.
+        if not self.people or [person.key for person in self.people] == [DEFAULT_PERSON_KEY]:
+            person = default_person(self.layout, self.instructions_overlay)
+            object.__setattr__(self, "people", (person,))
+
+    def person(self, key: str) -> Person | None:
+        """The person with ``key``, or None when the settings name nobody by it."""
+        return next((person for person in self.people if person.key == key), None)
+
+    @property
+    def root_person(self) -> Person:
+        """The person with the empty prefix, whose addresses are ``/mcp`` and ``/mcp/limited``."""
+        return root_person(self.people)
 
 
 def _required_text(raw: dict[str, Any], key: str, path: Path) -> str:
@@ -203,7 +227,26 @@ def user_dir() -> Path:
     return Path(os.getenv("USER_DIR") or REPO_ROOT / "user").expanduser()
 
 
-def load_config(path: Path = DEFAULT_CONFIG_PATH) -> ConnectorConfig:
+def _every_tool_name(data_dir: Path) -> frozenset[str]:
+    """The name of every tool the connector can serve, with every integration on."""
+    # Imported here: the integrations import this module.
+    from src.brain.connector.integrations import build_tools
+
+    every = ConnectorConfig(
+        vault_path=Path(),
+        data_dir=data_dir,
+        public_url="https://connector.invalid",
+        allowed_redirect_uris=(),
+        integrations=Integrations(reminders=True, calendar=True, mail=True, contacts=True),
+    )
+    return frozenset(tool.name for tool in build_tools(every))
+
+
+def load_config(
+    path: Path = DEFAULT_CONFIG_PATH,
+    *,
+    tool_names: Callable[[Path], Collection[str]] = _every_tool_name,
+) -> ConnectorConfig:
     """Read the connector settings.
 
     A relative path (including the default) is looked up in the private overlay
@@ -227,6 +270,14 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> ConnectorConfig:
         data_dir = path.parent.resolve() / data_dir
     data_dir = _private_dir(data_dir)
     timezone, timezone_source = resolve_timezone(raw, path, user_dir() / PROFILE_NAME)
+    layout = load_layout(user_dir() / PROFILE_NAME)
+    people = load_people(
+        raw,
+        path,
+        layout,
+        user_dir(),
+        tool_names=tool_names(data_dir) if raw.get("people") is not None else None,
+    )
 
     return ConnectorConfig(
         vault_path=vault_path,
@@ -238,7 +289,8 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> ConnectorConfig:
         timezone=timezone,
         timezone_source=timezone_source,
         port=_port(raw, path),
-        layout=load_layout(user_dir() / PROFILE_NAME),
-        instructions_overlay=user_dir() / INSTRUCTIONS_OVERLAY_NAME,
+        layout=layout,
+        instructions_overlay=root_person(people).instructions_overlay,
         profile_path=user_dir() / PROFILE_NAME,
+        people=people,
     )

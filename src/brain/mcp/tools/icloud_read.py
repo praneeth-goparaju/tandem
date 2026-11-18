@@ -32,6 +32,7 @@ import email.utils
 import imaplib
 import logging
 import re
+from collections.abc import Callable
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from typing import Any, cast
 from zoneinfo import ZoneInfo
@@ -728,7 +729,7 @@ async def reminders_list(args):
         return _err("EventKit fetch timed out")
 
     rows: list[str] = []
-    for r in bucket["items"][:limit]:
+    for r in _ordered_for_listing(bucket["items"], _reminder_due_local)[:limit]:
         rows.append(_format_reminder_line(r))
     if not rows:
         return _ok("No reminders found.")
@@ -742,6 +743,23 @@ def _reminder_due_local(r) -> datetime | None:
     if due_date is None:
         return None
     return datetime.fromtimestamp(float(due_date.timeIntervalSince1970()), tz=UTC).astimezone()
+
+
+def _ordered_for_listing(items: list[Any], due_of: Callable[[Any], datetime | None]) -> list[Any]:
+    """Put reminders with a due time first, earliest first, then the rest in their order.
+
+    Overdue reminders therefore come before the cut at ``limit``.
+    """
+    dated: list[tuple[datetime, Any]] = []
+    undated: list[Any] = []
+    for item in items:
+        due = due_of(item)
+        if due is None:
+            undated.append(item)
+        else:
+            dated.append((due, item))
+    dated.sort(key=lambda pair: pair[0])
+    return [item for _, item in dated] + undated
 
 
 def _format_reminder_line(r) -> str:

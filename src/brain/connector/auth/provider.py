@@ -1,19 +1,24 @@
 """The vault connector's OAuth provider, on the ``mcp`` library's interfaces.
 
-claude.ai registers itself as a client, sends the owner's browser to the
+claude.ai registers itself as a client, sends the person's browser to the
 authorization endpoint and gets a code back at its callback, which it
 exchanges for tokens. The library's routes handle the protocol, including the
 PKCE check; this provider decides who may register, what each code and token
-is good for and for how long, and checks the owner's password and one-time
+is good for and for how long, and checks each person's password and one-time
 code for the sign-in page (``login.py``).
 
 - A client may register only when every one of its redirect addresses is in
   ``config.allowed_redirect_uris``, and a sign-in is started only for such an
   address, so a code is only ever sent to claude.ai.
-- Each sign-in is for one resource, ``<public_url>/mcp`` (full) or
-  ``<public_url>/mcp/limited``. Its code and tokens record it, so a token for
-  the limited endpoint is refused at the full one. Any other resource, or
-  none, is refused.
+- Each person has two resources, ``<public_url>/<prefix>/mcp`` (full) and
+  ``<public_url>/<prefix>/mcp/limited`` (``/mcp`` and ``/mcp/limited`` for the
+  empty prefix). Each sign-in is for one resource and so for one person; its
+  pending row, code and tokens record both, so a token for the limited
+  endpoint is refused at the full one and a token of one person is refused at
+  the other's addresses. Any other resource, or none, is refused, and a token
+  whose person no longer owns its resource (a person removed from the
+  settings) is refused at every address. A token's ``subject`` is the key of
+  its person.
 - Codes last 10 minutes and work once. Access tokens last 1 hour and refresh
   tokens 30 days. Using a refresh token replaces both tokens of its sign-in.
   Revoking a token revokes both tokens of its sign-in.
@@ -22,9 +27,10 @@ code for the sign-in page (``login.py``).
   registrations that have no pending sign-in, code or token; a pending sign-in
   keeps a 43-character PKCE challenge, a ``state`` of at most 1 KiB and each
   scope once.
-- The password is kept as an argon2 hash and the one-time code secret as
-  text, both in ``auth.db``. A code is checked only after the password, and
-  each code signs in once.
+- Each person's password is kept as an argon2 hash and their one-time code
+  secret as text, both in ``auth.db``. The sign-in page checks the password
+  and code of the person the address belongs to. A code is checked only after
+  the password, and each code signs in once.
 """
 
 from __future__ import annotations
@@ -60,8 +66,10 @@ from src.brain.connector.auth.store import (
     AuthStore,
 )
 from src.brain.connector.config import ConnectorConfig
+from src.brain.connector.people import DEFAULT_PERSON_KEY, DEFAULT_PERSON_NAME
 
-OWNER = "owner"
+Access = Literal["full", "limited"]
+_ACCESSES: tuple[Access, ...] = ("full", "limited")
 _CODE_DIGITS = 6
 _MAX_CLIENT_BYTES = 8 * 1024
 _MAX_STATE_BYTES = 1024
@@ -72,10 +80,13 @@ CheckResult = Literal["right", "wrong password", "wrong code", "code used"]
 
 @dataclass(frozen=True)
 class SignInRequest:
-    """What the sign-in page shows: the site the code goes back to, and the endpoint asked for."""
+    """What the sign-in page shows and checks: the site the code goes back to, the endpoint
+    asked for, and the person whose address it is."""
 
     host: str
-    access: Literal["full", "limited"]
+    access: Access
+    person: str = DEFAULT_PERSON_KEY
+    person_name: str = DEFAULT_PERSON_NAME
 
 
 def _canonical(url: str) -> str | None:
@@ -100,23 +111,30 @@ class VaultOAuthProvider(
 ):
     def __init__(self, config: ConnectorConfig, store: AuthStore) -> None:
         base = config.public_url.rstrip("/")
-        full = _canonical(f"{base}/mcp")
-        limited = _canonical(f"{base}/mcp/limited")
-        if full is None or limited is None:
-            raise ValueError(f"public_url is not an http(s) address: {config.public_url!r}")
+        self._resources: dict[str, tuple[str, Access]] = {}
+        for person in config.people:
+            for access in _ACCESSES:
+                url = _canonical(f"{base}{person.path(access)}")
+                if url is None:
+                    raise ValueError(f"public_url is not an http(s) address: {config.public_url!r}")
+                self._resources[url] = (person.key, access)
+        self._names = {person.key: person.name for person in config.people}
         self._store = store
-        self._full = full
-        self._resources = (full, limited)
         self._login_url = f"{base}/login"
         self._redirect_uris = frozenset(uri.strip() for uri in config.allowed_redirect_uris)
 
     def _resource(self, requested: str | None) -> str | None:
-        """The endpoint ``requested`` names, spelled as stored, or None if it names neither."""
+        """The endpoint ``requested`` names, spelled as stored, or None if it names none."""
         canonical = None if requested is None else _canonical(requested)
         return canonical if canonical in self._resources else None
 
+    def _owned(self, resource: str | None, person: str) -> bool:
+        """True when ``resource`` is a known address and belongs to ``person``."""
+        entry = self._resources.get(resource or "")
+        return entry is not None and entry[0] == person
+
     def _resource_refused(self) -> str:
-        return f"resource must be {self._resources[0]} or {self._resources[1]}"
+        return "resource must be " + " or ".join(self._resources)
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
         info = self._store.get_client(client_id)
@@ -155,25 +173,32 @@ class VaultOAuthProvider(
             raise AuthorizeError("invalid_request", f"state is over {_MAX_STATE_BYTES} bytes")
         scopes = None if params.scopes is None else list(dict.fromkeys(params.scopes))
         stored = params.model_copy(update={"resource": resource, "scopes": scopes})
-        pending_id = self._store.add_pending(client.client_id, stored.model_dump_json())
+        person = self._resources[resource][0]
+        pending_id = self._store.add_pending(client.client_id, stored.model_dump_json(), person)
         return f"{self._login_url}?{urlencode({'pending': pending_id})}"
 
     def sign_in_request(self, pending_id: str) -> SignInRequest | None:
-        """What a pending sign-in asks for, or None if it is unknown, expired or used."""
+        """What a pending sign-in asks for, or None if it is unknown, expired or used, or its
+        address does not belong to its person."""
         row = self._store.get_pending(pending_id)
         if row is None:
             return None
         params = AuthorizationParams.model_validate_json(row.params)
+        if not self._owned(params.resource, row.person):
+            return None
+        _, access = self._resources[params.resource or ""]
         return SignInRequest(
             host=urlparse(str(params.redirect_uri)).hostname or "",
-            access="full" if params.resource == self._full else "limited",
+            access=access,
+            person=row.person,
+            person_name=self._names[row.person],
         )
 
     def issue_code(self, pending_id: str) -> str | None:
         """Turn a pending sign-in into a code and return the address to send the browser to.
 
-        Call it only once the owner's password and one-time code have been
-        checked. Returns None when the pending sign-in is unknown, expired or
+        Call it only once the password and one-time code of the sign-in's
+        person have been checked. Returns None when the pending sign-in is unknown, expired or
         already used.
         """
         code = secrets.token_urlsafe(32)
@@ -199,7 +224,7 @@ class VaultOAuthProvider(
             redirect_uri=params.redirect_uri,
             redirect_uri_provided_explicitly=params.redirect_uri_provided_explicitly,
             resource=params.resource,
-            subject=OWNER,
+            subject=row.person,
         )
 
     async def exchange_authorization_code(
@@ -212,9 +237,11 @@ class VaultOAuthProvider(
         resource = self._resource(params.resource)
         if resource is None:
             raise TokenError("invalid_target", self._resource_refused())
+        if not self._owned(resource, row.person):
+            raise TokenError("invalid_grant", "authorization code is not valid")
         scopes = params.scopes or []
         access, refresh = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
-        self._store.add_tokens(client.client_id, scopes, resource, access, refresh)
+        self._store.add_tokens(client.client_id, scopes, resource, access, refresh, row.person)
         return _token(access, refresh, scopes)
 
     async def load_refresh_token(
@@ -223,13 +250,15 @@ class VaultOAuthProvider(
         row = self._store.get_token(refresh_token, "refresh")
         if row is None or row.client_id != client.client_id:
             return None
+        if not self._owned(row.resource, row.person):
+            return None
         return RefreshToken(
             token=refresh_token,
             client_id=row.client_id,
             scopes=list(row.scopes),
             expires_at=row.expires_at,
             resource=row.resource,
-            subject=OWNER,
+            subject=row.person,
         )
 
     async def exchange_refresh_token(
@@ -248,7 +277,7 @@ class VaultOAuthProvider(
 
     async def load_access_token(self, token: str) -> AccessToken | None:
         row = self._store.get_token(token, "access")
-        if row is None:
+        if row is None or not self._owned(row.resource, row.person):
             return None
         return AccessToken(
             token=token,
@@ -256,34 +285,38 @@ class VaultOAuthProvider(
             scopes=list(row.scopes),
             expires_at=row.expires_at,
             resource=row.resource,
-            subject=OWNER,
+            subject=row.person,
         )
 
     async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
         self._store.revoke(token.token)
 
 
-def set_password(store: AuthStore, password: str) -> None:
-    """Keep an argon2 hash of ``password`` as the connector's sign-in password."""
+def set_password(store: AuthStore, person: str, password: str) -> None:
+    """Keep an argon2 hash of ``password`` as ``person``'s sign-in password."""
     if not password:
         raise ValueError("the password must not be empty")
-    store.set_setting(HASH_SETTING, PasswordHasher().hash(password))
+    store.set_setting(HASH_SETTING, PasswordHasher().hash(password), person)
 
 
-def totp_setup(store: AuthStore) -> str:
-    """Make and keep a new one-time code secret; return the ``otpauth://`` address for an app.
+def totp_setup(store: AuthStore, person: str, name: str) -> str:
+    """Make and keep a new one-time code secret for ``person``; return the ``otpauth://``
+    address for an app, whose entry is named ``name``.
 
-    The address holds the secret: show it to the owner once, never log it.
+    The address holds the secret: show it to the person once, never log it.
     A new secret replaces the old one, whose codes stop working.
     """
     secret = pyotp.random_base32()
-    store.set_setting(TOTP_SETTING, secret)
-    return pyotp.TOTP(secret).provisioning_uri(name=OWNER, issuer_name="Vault")
+    store.set_setting(TOTP_SETTING, secret, person)
+    return pyotp.TOTP(secret).provisioning_uri(name=name, issuer_name="Vault")
 
 
-def sign_in_set_up(store: AuthStore) -> bool:
-    """True when both a password and a one-time code secret are set."""
-    return store.get_setting(HASH_SETTING) is not None and store.get_setting(TOTP_SETTING) is not None
+def sign_in_set_up(store: AuthStore, person: str) -> bool:
+    """True when ``person`` has both a password and a one-time code secret."""
+    return (
+        store.get_setting(HASH_SETTING, person) is not None
+        and store.get_setting(TOTP_SETTING, person) is not None
+    )
 
 
 def _code_step(totp: pyotp.TOTP, code: str, now: datetime) -> int | None:
@@ -303,8 +336,10 @@ def _code_step(totp: pyotp.TOTP, code: str, now: datetime) -> int | None:
     )
 
 
-def check_password_and_code(store: AuthStore, password: str, code: str) -> CheckResult:
-    """Check the owner's password and one-time code.
+def check_password_and_code(
+    store: AuthStore, person: str, password: str, code: str
+) -> CheckResult:
+    """Check ``person``'s password and one-time code.
 
     Returns "right" when both are right and the code has not signed in
     before; "wrong password"; "wrong code" when the password is right but the
@@ -313,8 +348,8 @@ def check_password_and_code(store: AuthStore, password: str, code: str) -> Check
     right, so a wrong password never uses up a code. Runs argon2, so call it
     off the event loop.
     """
-    password_hash = store.get_setting(HASH_SETTING)
-    secret = store.get_setting(TOTP_SETTING)
+    password_hash = store.get_setting(HASH_SETTING, person)
+    secret = store.get_setting(TOTP_SETTING, person)
     if password_hash is None or secret is None:
         return "wrong password"
     try:
@@ -324,4 +359,4 @@ def check_password_and_code(store: AuthStore, password: str, code: str) -> Check
     step = _code_step(pyotp.TOTP(secret), "".join(code.split()), store.now())
     if step is None:
         return "wrong code"
-    return "right" if store.claim_code_step(step) else "code used"
+    return "right" if store.claim_code_step(step, person) else "code used"

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import re
 import stat
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -492,3 +494,114 @@ def test_a_plain_http_public_url_is_refused(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="public_url must start with https://"):
         load_config(cfg_file)
+
+
+def _example_people() -> str:
+    """The commented ``people`` section of the shipped example, uncommented."""
+    lines = (REPO_ROOT / "examples" / "vault_connector.example.yaml").read_text().splitlines()
+    start = lines.index("# people:")
+    return "\n".join(line.removeprefix("# ") for line in lines[start:]) + "\n"
+
+
+def test_without_people_there_is_one_owner(tmp_path: Path) -> None:
+    cfg = load_config(_config_file(tmp_path))
+
+    assert len(cfg.people) == 1
+    owner = cfg.people[0]
+    assert (owner.key, owner.prefix, owner.excluded_tools) == ("owner", "", frozenset())
+    assert owner.reminder_lists is None and owner.calendars is None
+    assert owner.icloud_apple_id is None
+    assert owner.layout == cfg.layout
+    assert owner.instructions_overlay == cfg.instructions_overlay
+    assert (owner.path("full"), owner.path("limited")) == ("/mcp", "/mcp/limited")
+    assert cfg.person("owner") == owner and cfg.person("sam") is None
+    assert cfg.root_person == owner
+
+
+def test_a_config_built_in_code_has_the_default_person() -> None:
+    layout = VaultLayout(daily_notes_dir="Days")
+    cfg = ConnectorConfig(
+        vault_path=Path("/v"),
+        data_dir=Path("/d"),
+        public_url="https://vault.example.com",
+        allowed_redirect_uris=(),
+        layout=layout,
+    )
+
+    assert [person.key for person in cfg.people] == ["owner"]
+    assert cfg.people[0].layout == layout
+
+
+def test_the_example_people_load(
+    tmp_path: Path, private_overlay_is_a_temp_folder: Path
+) -> None:
+    cfg = load_config(_config_file(tmp_path, _example_people()))
+
+    alex, sam = cfg.people
+    assert (alex.key, alex.name, alex.prefix) == ("alex", "Alex", "")
+    assert (sam.key, sam.name, sam.prefix) == ("sam", "Sam", "sam")
+    assert (sam.path("full"), sam.path("limited")) == ("/sam/mcp", "/sam/mcp/limited")
+    assert sam.layout.daily_note_path(datetime(2026, 12, 1)) == (
+        "01 - Daily Notes/Sam/2026/12/2026-12-01.md"
+    )
+    assert sam.layout.template_path == "11 - Templates/Daily Note - Sam.md"
+    assert sam.layout.actions_dir == cfg.layout.actions_dir
+    assert alex.layout == cfg.layout
+    assert sam.icloud_apple_id == "sam@example.com" and sam.icloud_imap_user is None
+    assert sam.excluded_tools == frozenset({"mail_archive"})
+    assert sam.reminder_lists == ("Family", "Shopping") and sam.calendars is None
+    assert alex.reminder_lists is None
+    assert alex.instructions_overlay == private_overlay_is_a_temp_folder / "connector_instructions.yaml"
+    assert sam.instructions_overlay == (
+        private_overlay_is_a_temp_folder / "connector_instructions.sam.yaml"
+    )
+    assert cfg.instructions_overlay == alex.instructions_overlay
+    assert cfg.root_person == alex and cfg.person("sam") == sam
+
+
+def _people(sam: str, alex: str = "    name: Alex\n    prefix: ''\n") -> str:
+    return f"people:\n  alex:\n{alex}  sam:\n{sam}"
+
+
+@pytest.mark.parametrize(
+    ("people", "named"),
+    [
+        (_people("    name: Sam\n    prefix: ''\n"), "people.sam"),
+        (
+            _people("    name: Sam\n    prefix: sam\n", alex="    name: Alex\n    prefix: al\n"),
+            "alex, sam",
+        ),
+        *[
+            (_people(f"    name: Sam\n    prefix: '{prefix}'\n"), "people.sam.prefix")
+            for prefix in (
+                "mcp",
+                "login",
+                "health",
+                "authorize",
+                "token",
+                "register",
+                "revoke",
+                ".well-known",
+                "sam/x",
+                "Sam",
+            )
+        ],
+        (_people("    name: Sam\n    prefix: sam\n    colour: blue\n"), "people.sam.colour"),
+        (
+            _people("    name: Sam\n    prefix: sam\n    exclude_tools: [mail_delete]\n"),
+            "people.sam.exclude_tools names mail_delete",
+        ),
+        ("people:\n  Sam:\n    name: Sam\n    prefix: ''\n", "people.Sam"),
+        ("people:\n  owner:\n    name: Sam\n    prefix: ''\n", "people.owner"),
+        (_people("    prefix: sam\n"), "people.sam.name"),
+        (_people("    name: Sam\n"), "people.sam.prefix"),
+        (_people("    name: Sam\n    prefix: sam\n    reminder_lists: Family\n"), "people.sam"),
+        (
+            _people("    name: Sam\n    prefix: sam\n    daily_notes_dir: ../Out\n"),
+            "people.sam.daily_notes_dir",
+        ),
+    ],
+)
+def test_bad_people_are_refused_naming_the_key(tmp_path: Path, people: str, named: str) -> None:
+    with pytest.raises(ValueError, match=re.escape(named)):
+        load_config(_config_file(tmp_path, people))

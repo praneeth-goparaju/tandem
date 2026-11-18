@@ -1765,24 +1765,74 @@ def check_connector_sign_in(cfg, repo_root: Path) -> list[Issue]:
     try:
         if database.is_file():
             with closing(sqlite3.connect(f"{database.as_uri()}?mode=ro", uri=True)) as conn:
-                rows = conn.execute(
-                    "SELECT key FROM settings WHERE key IN (?, ?)", (HASH_SETTING, TOTP_SETTING)
-                ).fetchall()
+                rows = conn.execute("SELECT key FROM settings").fetchall()
             found = {row[0] for row in rows}
     except sqlite3.Error as exc:
         if "no such table" not in str(exc):
             return [Issue(file=str(database), message=f"cannot read auth.db: {exc}")]
-    steps = []
-    if HASH_SETTING not in found:
-        steps.append("python -m src.brain.connector set-password")
-    if TOTP_SETTING not in found:
-        steps.append("python -m src.brain.connector totp-setup")
-    if not steps:
+    root = config.root_person.key
+    single = len(config.people) == 1
+
+    def has(key: str, person: str) -> bool:
+        # Keys without a person, or of the single owner, are from before people;
+        # the connector gives them to the root person when it starts.
+        if f"{key}:{person}" in found:
+            return True
+        return person == root and (key in found or f"{key}:owner" in found)
+
+    issues = []
+    for person in config.people:
+        option = "" if single else f" --person {person.key}"
+        steps = []
+        if not has(HASH_SETTING, person.key):
+            steps.append(f"python -m src.brain.connector set-password{option}")
+        if not has(TOTP_SETTING, person.key):
+            steps.append(f"python -m src.brain.connector totp-setup{option}")
+        if steps:
+            whose = "" if single else f" for {person.key}"
+            issues.append(Issue(
+                file=str(database),
+                message=f"connector sign-in{whose} is not set up; run " + " and ".join(steps),
+            ))
+    return issues
+
+
+@register(severity="warn", connector=True)
+@_never_crash
+def check_connector_people(cfg, repo_root: Path) -> list[Issue]:
+    """Each person's addresses, which the Cloudflare rule must cover, and their Keychain item."""
+    config, _ = _connector_config()
+    if config is None:
         return []
-    return [Issue(
-        file=str(database),
-        message="connector sign-in is not set up; run " + " and ".join(steps),
+    from src.brain.mcp.tools._icloud import KEYCHAIN_SERVICE, _keychain_password
+
+    base = config.public_url.rstrip("/")
+    addresses = [
+        f"{base}{person.path(access)}"
+        for person in config.people
+        for access in ("full", "limited")
+    ]
+    where = str(_connector_file())
+    issues = [Issue(
+        file=where,
+        message="the Cloudflare rule must cover these addresses: " + ", ".join(addresses),
+        severity="info",
     )]
+    accounts = {"calendar", "mail", "contacts"} & set(config.integrations.enabled_names())
+    for person in config.people:
+        if person.icloud_apple_id is None or not accounts:
+            continue
+        if not _keychain_password(person.icloud_apple_id):
+            issues.append(Issue(
+                file=where,
+                message=(
+                    f"{person.key}'s iCloud account {person.icloud_apple_id} has no app password "
+                    f"in the login Keychain item {KEYCHAIN_SERVICE}; run `security "
+                    f"add-generic-password -s {KEYCHAIN_SERVICE} -a {person.icloud_apple_id} -w` "
+                    "and type the password at the prompt"
+                ),
+            ))
+    return issues
 
 
 @register(severity="warn", connector=True)
@@ -1791,17 +1841,20 @@ def check_connector_instructions(cfg, repo_root: Path) -> list[Issue]:
     config, _ = _connector_config()
     if config is None:
         return []
-    from src.brain.connector.instructions import load_overlay, render_instructions
+    from src.brain.connector.server import render_person_instructions
 
-    try:
-        overlay = load_overlay(config.instructions_overlay, config.profile_path)
-        render_instructions(overlay, config.layout, config.integrations)
-    except Exception as exc:  # noqa: BLE001
-        return [Issue(
-            file=str(config.instructions_overlay),
-            message=f"the server instructions do not render: {exc}",
-        )]
-    return []
+    # Every person, rendered as the connector renders them at start: a second
+    # person adds a rule to everyone's instructions, which can pass the limit.
+    issues = []
+    for person in config.people:
+        try:
+            render_person_instructions(config, person)
+        except Exception as exc:  # noqa: BLE001
+            issues.append(Issue(
+                file=str(person.instructions_overlay),
+                message=f"the server instructions for {person.name} do not render: {exc}",
+            ))
+    return issues
 
 
 @register(severity="warn", connector=True)
@@ -1857,14 +1910,17 @@ def check_connector_daily_note_template(cfg, repo_root: Path) -> list[Issue]:
     config, _ = _connector_config()
     if config is None or not config.vault_path.is_dir():
         return []
-    template = config.vault_path / config.layout.template_path
-    if template.is_file():
-        return []
-    return [Issue(
-        file=str(template),
-        message=(
-            f"the daily note template {config.layout.template_path} is missing in the "
-            f"vault, so appending to today's note fails; run `python -m src.cli init-vault "
-            f"{config.vault_path}` (it never overwrites a file) or create the note"
-        ),
-    )]
+    issues = []
+    for person in config.people:
+        template = config.vault_path / person.layout.template_path
+        if template.is_file():
+            continue
+        issues.append(Issue(
+            file=str(template),
+            message=(
+                f"the daily note template {person.layout.template_path} is missing in the "
+                f"vault, so appending to today's note fails; run `python -m src.cli init-vault "
+                f"{config.vault_path}` (it never overwrites a file) or create the note"
+            ),
+        ))
+    return issues

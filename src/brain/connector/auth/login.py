@@ -1,8 +1,9 @@
 """The vault connector's sign-in page: plain HTML from two Starlette routes.
 
 ``GET /login?pending=<id>`` names the site the code will be sent back to (the
-host of the sign-in's redirect address, from the server's own records) and the
-endpoint asked for, and shows a form for the password and the six-digit code.
+host of the sign-in's redirect address, from the server's own records), the
+endpoint asked for and, when the settings name people, the person whose
+address it is, and shows a form for that person's password and six-digit code.
 
 ``POST /login`` handles one try at a time. It first checks whether the
 client's address must still wait after earlier failures (429, nothing else is
@@ -41,6 +42,7 @@ from src.brain.connector.auth.provider import (
 )
 from src.brain.connector.auth.store import AuthStore
 from src.brain.connector.auth.throttle import Throttle
+from src.brain.connector.people import DEFAULT_PERSON_KEY
 
 _MAX_FORM_BYTES = 16 * 1024
 _HEADERS = {
@@ -109,9 +111,10 @@ def _form(
     headers: dict[str, str] | None = None,
     background: BackgroundTask | None = None,
 ) -> HTMLResponse:
+    who = "" if sign_in.person == DEFAULT_PERSON_KEY else f" as {sign_in.person_name}"
     return _page(
         f"<p><strong>{html.escape(sign_in.host)}</strong> is asking to use the "
-        f"{sign_in.access} vault connector.</p>\n"
+        f"{sign_in.access} vault connector{html.escape(who)}.</p>\n"
         "<p>Sign in only if you just added or reconnected the connector in Claude.</p>\n"
         f"{_message(message)}"
         '<form method="post">\n'
@@ -172,13 +175,15 @@ def login_routes(
                 return _form(sign_in, pending_id, text, 429, retry)
             if sign_in is None:
                 return _page(_message(_EXPIRED), 400)
-            if not sign_in_set_up(store):
+            if not sign_in_set_up(store, sign_in.person):
                 _, alerts = throttle.record_failure(client)
                 return _form(
                     sign_in, pending_id, _NOT_SET_UP, 401, background=_sending(throttle, alerts)
                 )
             password, code = _text(form, "password"), _text(form, "totp")
-            result = await anyio.to_thread.run_sync(check_password_and_code, store, password, code)
+            result = await anyio.to_thread.run_sync(
+                check_password_and_code, store, sign_in.person, password, code
+            )
             if result != "right":
                 _, alerts = throttle.record_failure(client, only_code_wrong=result == "wrong code")
                 return _form(

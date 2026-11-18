@@ -184,17 +184,21 @@ def append(
     now: datetime | None = None,
     *,
     layout: VaultLayout = DEFAULT_LAYOUT,
+    owner_only: tuple[str, ...] | None = None,
 ) -> ReadResult:
     """Add ``text`` to the end of a note, or to the end of ``heading``'s section.
 
-    Today's daily note is created from the template when it does not exist;
-    any other missing note raises ``FileNotFoundError``. Raises ``StaleVersion``
-    when the note changed after it was read.
+    Today's daily note of ``layout`` is created from ``layout``'s template when
+    it does not exist; any other missing note raises ``FileNotFoundError``.
+    Raises ``StaleVersion`` when the note changed after it was read.
+    ``owner_only`` is the list of paths no chat may write, by default the one
+    of ``layout``.
     """
     if not text.strip():
         raise ValueError("there is no text to append")
     when = now if now is not None else datetime.now().astimezone()
-    path = check_writable(vault, rel, owner_only=owner_only_paths(layout))
+    refused = owner_only_paths(layout) if owner_only is None else owner_only
+    path = check_writable(vault, rel, owner_only=refused)
     expected_hash: str | None
     if path.exists():
         note, expected_hash = _read_strict(path, rel)

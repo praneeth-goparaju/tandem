@@ -7,6 +7,9 @@ regardless of normalisation, so the NFC path still opens the file stored in
 NFD. Symlinks are followed, and anything that ends up outside the vault folder
 is refused.
 
+Reading goes through ``check_readable``, which also refuses hidden files and
+folders (any part of the path that starts with a dot, asked for or real).
+
 Protected and owner-only paths can be read but never written. They are
 compared case-folded, so ``claude.md`` is refused whether or not the volume
 tells upper and lower case apart. Beyond the fixed list, a write is refused
@@ -118,4 +121,25 @@ def check_writable(vault: Path, rel: str, *, owner_only: tuple[str, ...] = OWNER
         broken = _rule_broken(relative, owner_only)
         if broken is not None:
             raise PathRefused(broken)
+    return resolved
+
+
+def _hidden_part(relative: str) -> bool:
+    parts = [part for part in relative.split("/") if part not in ("", ".", "..")]
+    return any(part.startswith(".") for part in parts)
+
+
+def check_readable(vault: Path, rel: str) -> Path:
+    """Return the real path of ``rel`` if a chat may read it.
+
+    Refuses everything ``resolve_in_vault`` refuses, plus any path where a part
+    of the path as asked for, or of the real path a symlink leads to, starts
+    with a dot.
+    """
+    resolved = resolve_in_vault(vault, rel)
+    asked = posixpath.normpath(_nfc(rel))
+    real = _vault_relative(resolved, _vault_root(vault))
+    for relative in (_nfc(rel), asked, str(real)):
+        if _hidden_part(relative):
+            raise PathRefused(f"{rel} is refused: hidden files and folders cannot be read")
     return resolved

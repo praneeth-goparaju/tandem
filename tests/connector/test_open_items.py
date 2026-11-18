@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import date, datetime
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
 import yaml
 
 from src.brain.connector.layout import VaultLayout
+from src.brain.connector.tools import Call, ToolEnv, run_tool, vault_tools
 from src.brain.connector.vault.actions import open_item_add
+from src.brain.connector.vault.undo_store import UndoStore
 
 TODAY = date(2026, 10, 22)
 
@@ -151,3 +155,95 @@ def test_default_day_is_today_in_the_process_zone(
     today = datetime.now(ZoneInfo(zone_name)).date()
     assert result.path.startswith(f"Actions/A-{today:%Y%m%d}-01 - ")
     assert _frontmatter(result.text)["added"] == _frontmatter(result.text)["updated"]
+
+
+def test_long_outcome_still_creates_the_item(vault: Path) -> None:
+    outcome = "Before signing any house contract Alex has checked " + "the land register " * 30
+
+    result = open_item_add(vault, outcome, "next", today=date(2026, 11, 18))
+
+    name = Path(result.path).name
+    assert len(name.encode()) <= 160
+    assert f"# {' '.join(outcome.split())}" in result.text
+    assert (vault / result.path).is_file()
+
+
+def test_outcome_ending_in_md_gives_one_extension(vault: Path) -> None:
+    result = open_item_add(vault, "Check House Watch Log.md", "next", today=date(2026, 11, 18))
+
+    assert result.path.endswith("Check House Watch Log.md")
+    assert not result.path.endswith(".md.md")
+
+
+def test_cut_never_splits_a_character(vault: Path) -> None:
+    result = open_item_add(vault, "ä" * 300, "next", today=date(2026, 11, 18))
+
+    Path(result.path).name.encode().decode()
+    assert len(Path(result.path).name.encode()) <= 160
+
+
+def test_an_item_names_its_owner_and_who_assigned_it(vault: Path) -> None:
+    result = open_item_add(
+        vault, "Book the dentist", "next", today=TODAY, owner="alex", assigned_by="sam"
+    )
+
+    front = _frontmatter(result.text)
+    assert (front["owner"], front["assigned_by"]) == ("alex", "sam")
+    keys = list(front)
+    assert keys[keys.index("priority") + 1 : keys.index("priority") + 3] == [
+        "owner",
+        "assigned_by",
+    ]
+
+
+def _tool_run(vault: Path, tmp_path: Path, args: dict[str, Any], call: Call, people: tuple[str, ...]) -> str:
+    env = ToolEnv(vault=vault, undo=UndoStore(tmp_path / "undo.db"))
+    tool = next(tool for tool in vault_tools(people) if tool.name == "open_item_add")
+    return asyncio.run(run_tool(tool, env, args, call))
+
+
+SAM = Call(person="sam", person_name="Sam")
+
+
+def test_sams_item_is_hers_unless_she_names_another_owner(vault: Path, tmp_path: Path) -> None:
+    people = ("alex", "sam")
+    own = _tool_run(vault, tmp_path, {"outcome": "Buy shoes", "status": "next"}, SAM, people)
+    other = _tool_run(
+        vault, tmp_path, {"outcome": "Fix bike", "status": "next", "owner": "alex"}, SAM, people
+    )
+    both = _tool_run(
+        vault, tmp_path, {"outcome": "Plan trip", "status": "next", "owner": "both"}, SAM, people
+    )
+    stranger = _tool_run(
+        vault, tmp_path, {"outcome": "Odd", "status": "next", "owner": "pat"}, SAM, people
+    )
+
+    assert "owner: sam\nassigned_by: sam\n" in own
+    assert "owner: alex\nassigned_by: sam\n" in other
+    assert "owner: both\nassigned_by: sam\n" in both
+    assert stranger.startswith("ERROR: invalid arguments for open_item_add")
+    assert len(list((vault / "Actions").iterdir())) == 3
+
+
+def test_the_owner_argument_is_offered_only_when_there_are_people() -> None:
+    def schema(people: tuple[str, ...]) -> dict[str, Any]:
+        return next(t for t in vault_tools(people) if t.name == "open_item_add").schema
+
+    shared = schema(("alex", "sam"))["properties"]["owner"]
+    assert shared["enum"] == ["alex", "sam", "both"]
+    assert "the person you are working with" in shared["description"]
+    assert "owner" not in schema(())["properties"]
+    assert "owner" not in schema(("alex",))["properties"]
+
+
+def test_a_connector_without_people_writes_no_owner(vault: Path, tmp_path: Path) -> None:
+    text = _tool_run(vault, tmp_path, {"outcome": "Buy shoes", "status": "next"}, Call(), ())
+
+    assert "owner:" not in text and "assigned_by:" not in text
+
+
+def test_one_named_person_owns_their_items(vault: Path, tmp_path: Path) -> None:
+    alex = Call(person="alex", person_name="Alex")
+    text = _tool_run(vault, tmp_path, {"outcome": "Buy shoes", "status": "next"}, alex, ("alex",))
+
+    assert "owner: alex\nassigned_by: alex\n" in text
