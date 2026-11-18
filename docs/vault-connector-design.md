@@ -75,7 +75,7 @@ connector's data folder.
 - Each person gets their own tool list (`exclude_tools`), rules (their overlay plus
   one rule naming the others), daily notes, allowed Reminders lists and calendars,
   and iCloud account for mail, calendar and contacts. Reminders use this Mac's
-  Apple account for everyone; Outlook stays with the empty prefix.
+  Apple account for everyone.
 - The write lock, the undo store and the audit log are shared. The edit limit is
   counted per person, a held edit can be confirmed only by its person, and either
   person can undo any edit. Open items record `owner` and `assigned_by`.
