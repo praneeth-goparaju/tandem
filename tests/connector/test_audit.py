@@ -6,21 +6,22 @@ import os
 import stat
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from src.brain.connector.audit import AuditLog
 
 
-def _lines(path: Path) -> list[dict[str, str]]:
+def _lines(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
 def test_one_line_per_call(tmp_path: Path) -> None:
     log = AuditLog(tmp_path / "audit")
     when = datetime(2026, 10, 22, 9, 30, 5, tzinfo=UTC)
-    log.write("read_note", "Notes/A.md", "ok", "tok1", "path=Notes/A.md", now=when)
-    log.write("edit_note", "Notes/B.md", "held", "tok2", "mode=replace", now=when)
+    log.write("read_note", "Notes/A.md", "ok", "tok1", {"path": "Notes/A.md"}, now=when)
+    log.write("edit_note", "Notes/B.md", "held", "tok2", {"mode": "replace"}, now=when)
 
     raw = (tmp_path / "audit" / "audit-2026-10.jsonl").read_text(encoding="utf-8")
     assert raw.endswith("\n")
@@ -31,7 +32,11 @@ def test_one_line_per_call(tmp_path: Path) -> None:
         "target": "Notes/A.md",
         "result": "ok",
         "token_id": "tok1",
-        "args": "path=Notes/A.md",
+        "args": {"path": "Notes/A.md"},
+        "person": "",
+        "sign_in_id": "",
+        "endpoint": "",
+        "result_id": "",
     }
     assert second["tool"] == "edit_note"
     assert second["result"] == "held"
@@ -40,7 +45,7 @@ def test_one_line_per_call(tmp_path: Path) -> None:
 def test_lines_have_sorted_keys_and_keep_unicode(tmp_path: Path) -> None:
     log = AuditLog(tmp_path)
     when = datetime(2026, 10, 22, tzinfo=UTC)
-    log.write("read_note", "Notes/Café.md", "ok", "t", "größe", now=when)
+    log.write("read_note", "Notes/Café.md", "ok", "t", {"note": "größe"}, now=when)
     raw = (tmp_path / "audit-2026-10.jsonl").read_text(encoding="utf-8")
     assert "Café" in raw
     assert "größe" in raw
@@ -50,8 +55,8 @@ def test_lines_have_sorted_keys_and_keep_unicode(tmp_path: Path) -> None:
 
 def test_monthly_file_name(tmp_path: Path) -> None:
     log = AuditLog(tmp_path)
-    log.write("t", "x", "ok", "k", "", now=datetime(2026, 1, 31, 23, 59, tzinfo=UTC))
-    log.write("t", "x", "ok", "k", "", now=datetime(2026, 2, 1, 0, 0, tzinfo=UTC))
+    log.write("t", "x", "ok", "k", {}, now=datetime(2026, 1, 31, 23, 59, tzinfo=UTC))
+    log.write("t", "x", "ok", "k", {}, now=datetime(2026, 2, 1, 0, 0, tzinfo=UTC))
     assert sorted(p.name for p in tmp_path.iterdir()) == [
         "audit-2026-01.jsonl",
         "audit-2026-02.jsonl",
@@ -63,7 +68,7 @@ def test_time_is_utc_for_other_zones(tmp_path: Path) -> None:
 
     berlin = timezone(timedelta(hours=2))
     log = AuditLog(tmp_path)
-    log.write("t", "x", "ok", "k", "", now=datetime(2026, 3, 1, 1, 0, tzinfo=berlin))
+    log.write("t", "x", "ok", "k", {}, now=datetime(2026, 3, 1, 1, 0, tzinfo=berlin))
     (entry,) = _lines(tmp_path / "audit-2026-02.jsonl")
     assert entry["time"] == "2026-02-28T23:00:00+00:00"
 
@@ -71,7 +76,7 @@ def test_time_is_utc_for_other_zones(tmp_path: Path) -> None:
 def test_default_now_is_current_utc_time(tmp_path: Path) -> None:
     log = AuditLog(tmp_path)
     before = datetime.now(UTC)
-    log.write("t", "x", "ok", "k", "")
+    log.write("t", "x", "ok", "k", {})
     after = datetime.now(UTC)
     (path,) = tmp_path.iterdir()
     (entry,) = _lines(path)
@@ -82,28 +87,28 @@ def test_default_now_is_current_utc_time(tmp_path: Path) -> None:
 def test_long_text_truncated_to_200(tmp_path: Path) -> None:
     log = AuditLog(tmp_path)
     when = datetime(2026, 10, 22, tzinfo=UTC)
-    log.write("t", "x", "e" * 500, "k", "a" * 500, now=when)
-    log.write("t", "x", "r" * 200, "k", "b" * 200, now=when)
+    log.write("t", "x", "e" * 500, "k", {"a": "a" * 500}, now=when)
+    log.write("t", "x", "r" * 200, "k", {"b": "b" * 200}, now=when)
     long_entry, exact_entry = _lines(tmp_path / "audit-2026-10.jsonl")
-    assert long_entry["args"] == "a" * 200 + "..."
+    assert long_entry["args"] == {"a": "a" * 200 + "..."}
     assert long_entry["result"] == "e" * 200 + "..."
-    assert exact_entry["args"] == "b" * 200
+    assert exact_entry["args"] == {"b": "b" * 200}
     assert exact_entry["result"] == "r" * 200
 
 
 def test_text_with_newlines_stays_on_one_line(tmp_path: Path) -> None:
     log = AuditLog(tmp_path)
-    log.write("t", "x", "ok", "k", "line one\nline two", now=datetime(2026, 10, 1, tzinfo=UTC))
+    log.write("t", "x", "ok", "k", {"a": "line one\nline two"}, now=datetime(2026, 10, 1, tzinfo=UTC))
     path = tmp_path / "audit-2026-10.jsonl"
     assert len(path.read_text(encoding="utf-8").splitlines()) == 1
-    assert _lines(path)[0]["args"] == "line one\nline two"
+    assert _lines(path)[0]["args"] == {"a": "line one\nline two"}
 
 
 def test_directory_and_file_modes(tmp_path: Path) -> None:
     old_umask = os.umask(0)
     try:
         log = AuditLog(tmp_path / "data" / "audit")
-        log.write("t", "x", "ok", "k", "", now=datetime(2026, 10, 1, tzinfo=UTC))
+        log.write("t", "x", "ok", "k", {}, now=datetime(2026, 10, 1, tzinfo=UTC))
     finally:
         os.umask(old_umask)
     directory = tmp_path / "data" / "audit"
@@ -162,7 +167,7 @@ def test_prune_ignores_other_files(tmp_path: Path) -> None:
 
 def test_prune_defaults_to_now_and_returns_zero_when_nothing_old(tmp_path: Path) -> None:
     log = AuditLog(tmp_path)
-    log.write("t", "x", "ok", "k", "")
+    log.write("t", "x", "ok", "k", {})
     assert log.prune(datetime.now(UTC)) == 0
     assert len(list(tmp_path.iterdir())) == 1
 
@@ -176,7 +181,7 @@ def test_write_failure_is_logged_not_raised(
         if os.access(tmp_path / "audit", os.W_OK):
             pytest.skip("running with permissions that ignore directory modes")
         with caplog.at_level(logging.WARNING, logger="src.brain.connector.audit"):
-            log.write("t", "x", "ok", "k", "", now=datetime(2026, 10, 1, tzinfo=UTC))
+            log.write("t", "x", "ok", "k", {}, now=datetime(2026, 10, 1, tzinfo=UTC))
     finally:
         (tmp_path / "audit").chmod(0o700)
     assert [r.levelno for r in caplog.records] == [logging.WARNING]
@@ -187,3 +192,37 @@ def test_wrong_argument_type_still_raises(tmp_path: Path) -> None:
     log = AuditLog(tmp_path)
     with pytest.raises(TypeError):
         log.write("t", "x", "ok", "k", 5, now=datetime(2026, 10, 1, tzinfo=UTC))  # type: ignore[arg-type]
+
+
+def test_new_keys_are_written(tmp_path: Path) -> None:
+    log = AuditLog(tmp_path)
+    log.write(
+        "vault_edit",
+        "Notes/A.md",
+        "held: heading",
+        "tok",
+        {"path": "Notes/A.md"},
+        person="owner",
+        sign_in_id="abc123abc123",
+        endpoint="limited",
+        result_id="held-1",
+        now=datetime(2026, 10, 1, tzinfo=UTC),
+    )
+    (entry,) = _lines(tmp_path / "audit-2026-10.jsonl")
+    assert entry["person"] == "owner"
+    assert entry["sign_in_id"] == "abc123abc123"
+    assert entry["endpoint"] == "limited"
+    assert entry["result_id"] == "held-1"
+
+
+def test_long_argument_values_are_cut_one_by_one_and_stay_valid_json(tmp_path: Path) -> None:
+    log = AuditLog(tmp_path)
+    args = {"path": "Notes/A.md", "text": "t" * 5000, "nested": {"x": "y" * 300}, "n": 3}
+    log.write("t", "x", "ok", "k", args, now=datetime(2026, 10, 1, tzinfo=UTC))
+    (entry,) = _lines(tmp_path / "audit-2026-10.jsonl")
+    assert entry["args"] == {
+        "path": "Notes/A.md",
+        "text": "t" * 200 + "...",
+        "nested": {"x": "y" * 200 + "..."},
+        "n": 3,
+    }

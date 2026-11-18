@@ -167,9 +167,17 @@ def _load_overlay_file(path: Path | None) -> InstructionsOverlay:
 
 
 def render_instructions(
-    overlay: InstructionsOverlay, layout: VaultLayout, integrations: Integrations
+    overlay: InstructionsOverlay,
+    layout: VaultLayout,
+    integrations: Integrations,
+    *,
+    others: tuple[str, ...] = (),
 ) -> str:
-    """Render the server instructions for this overlay, layout and set of integrations."""
+    """Render the server instructions for this overlay, layout and set of integrations.
+
+    ``others`` names the other people who use the vault; when there are any,
+    one rule says whose notes are whose.
+    """
     env = Environment(
         loader=FileSystemLoader(str(TEMPLATE_PATH.parent)),
         autoescape=select_autoescape([]),
@@ -182,6 +190,7 @@ def render_instructions(
         owner=overlay.owner_name,
         privacy_rule=overlay.privacy_rule,
         extra_rules=overlay.extra_rules,
+        others=others,
         routing_rows=overlay.routing_rows,
         source_of_truth=overlay.source_of_truth,
         reminders_or_calendar=integrations.reminders or integrations.calendar,

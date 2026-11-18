@@ -8,9 +8,12 @@ view filters on, a heading with the outcome, and a ``Source:`` line.
 The file name is ``A-YYYYMMDD-NN - <Outcome>.md``. ``NN`` is the next free
 number for that day, found from the file names already in ``Actions/``. In the
 file name, ``/`` and ``\\`` become ``-`` and the characters ``: * ? " < > |``
-are dropped; the heading keeps the outcome as written. An item that is
+are dropped, a trailing ``.md`` is removed and the rest is cut to ``MAX_NAME_BYTES`` bytes;
+the heading keeps the full outcome as written. An item that is
 ``waiting`` needs both who it waits on and the date to follow up. For a
-``next`` item those two are left out.
+``next`` item those two are left out. When the settings name people, the
+frontmatter also says whose task it is (``owner``: a person's key or ``both``)
+and who added it (``assigned_by``); a connector without people leaves both out.
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ from src.brain.connector.vault.write import ICLOUD_SUFFIX, create
 
 _DROPPED = str.maketrans("", "", ':*?"<>|')
 _SEPARATORS = str.maketrans({"/": "-", "\\": "-"})
+MAX_NAME_BYTES = 120
 _NUMBERED = re.compile(r"^A-(\d{8})-(\d{2})(?: |\.|$)")
 
 
@@ -39,7 +43,17 @@ def _quoted(text: str) -> str:
 
 
 def _file_name_part(outcome: str) -> str:
-    return _one_line(outcome.translate(_SEPARATORS).translate(_DROPPED))
+    """Make the outcome fit in a file name.
+
+    A trailing ``.md`` is dropped, because the file gets its own. The text is cut
+    to ``MAX_NAME_BYTES`` UTF-8 bytes on a character boundary, then trailing
+    spaces and dots are removed.
+    """
+    text = _one_line(outcome.translate(_SEPARATORS).translate(_DROPPED))
+    if text.casefold().endswith(".md"):
+        text = text[:-3]
+    cut = text.encode("utf-8")[:MAX_NAME_BYTES].decode("utf-8", errors="ignore")
+    return cut.rstrip(" .")
 
 
 def _next_number(vault: Path, day: str, folder_name: str) -> int:
@@ -67,9 +81,14 @@ def open_item_add(
     source: str = "",
     today: date | None = None,
     *,
+    owner: str | None = None,
+    assigned_by: str | None = None,
     layout: VaultLayout = DEFAULT_LAYOUT,
 ) -> ReadResult:
     """Create one note in the actions folder and return it as read back.
+
+    ``owner`` and ``assigned_by`` go into the frontmatter right after
+    ``priority``; None leaves the line out.
 
     Raises ``ValueError`` for an empty outcome, an unknown status, a ``waiting`` item
     without ``waiting_on`` and ``follow_up``, or more than 99 items in a day.
@@ -93,6 +112,10 @@ def open_item_add(
 
     lines = ["---", "type: action", f"action_id: {action_id}", f"status: {status}"]
     lines.append("priority: normal")
+    if owner is not None:
+        lines.append(f"owner: {_one_line(owner)}")
+    if assigned_by is not None:
+        lines.append(f"assigned_by: {_one_line(assigned_by)}")
     if due is not None:
         lines.append(f"due: {due.isoformat()}")
     if status == "waiting" and follow_up is not None:

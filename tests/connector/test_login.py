@@ -22,6 +22,7 @@ from src.brain.connector.auth.provider import VaultOAuthProvider, set_password, 
 from src.brain.connector.auth.store import AuthStore
 from src.brain.connector.auth.throttle import Throttle
 from src.brain.connector.config import ConnectorConfig
+from src.brain.connector.people import Person
 
 PUBLIC_URL = "https://vault.example.com"
 FULL = f"{PUBLIC_URL}/mcp"
@@ -67,6 +68,7 @@ class Site:
         password: bool = True,
         redirect_uri: str = CALLBACK,
         alert: Callable[[str], None] | None = None,
+        people: tuple[Person, ...] = (),
     ) -> None:
         folder.mkdir(parents=True, exist_ok=True)
         self.clock = Clock()
@@ -78,13 +80,14 @@ class Site:
             data_dir=folder,
             public_url=PUBLIC_URL,
             allowed_redirect_uris=(redirect_uri,),
+            people=people,
         )
         self.provider = VaultOAuthProvider(config, self.store)
         self.throttle = Throttle(alert=alert or self.alerts.append, clock=self.ticker)
         self.totp: pyotp.TOTP | None = None
         if password:
-            set_password(self.store, PASSWORD)
-            self.totp = pyotp.TOTP(_query(totp_setup(self.store))["secret"])
+            set_password(self.store, "owner", PASSWORD)
+            self.totp = pyotp.TOTP(_query(totp_setup(self.store, "owner", "owner"))["secret"])
         self.redirect_uri = redirect_uri
         self.client = OAuthClientInformationFull(
             client_id="client-1",
@@ -113,7 +116,7 @@ class Site:
 
     def code(self, offset: int = 0) -> str:
         assert self.totp is not None
-        return self.totp.at(self.clock.now, offset)
+        return self.totp.at(self.clock.now, counter_offset=offset)
 
     def wrong_code(self) -> str:
         valid = {self.code(offset) for offset in (-1, 0, 1)}
@@ -225,7 +228,7 @@ def test_login_fails_until_password_and_code_are_set(tmp_path: Path) -> None:
     assert refused.status_code == 401
     assert "The connector has no password set yet." in refused.text
 
-    set_password(site.store, PASSWORD)
+    set_password(site.store, "owner", PASSWORD)
     site.ticker.now += 60
     refused = browser.post("/login", data=attempt)
     assert refused.status_code == 401
@@ -525,3 +528,57 @@ def test_alert_at_50_failures_from_all_addresses() -> None:
     assert alerts == [message]
     throttle.failure("203.0.113.200")
     assert alerts == [message, message]
+
+
+def test_each_person_signs_in_with_their_own_password_and_code(
+    tmp_path: Path, make_people: Callable[..., tuple[Person, Person]]
+) -> None:
+    site = Site(tmp_path, password=False, people=make_people())
+    totp = {}
+    for key, password in (("alex", PASSWORD), ("sam", PASSWORD + " for sam")):
+        set_password(site.store, key, password)
+        totp[key] = pyotp.TOTP(_query(totp_setup(site.store, key, key.title()))["secret"])
+    pending = site.start(f"{PUBLIC_URL}/sam/mcp")
+    browser = site.browser()
+
+    page = browser.get("/login", params={"pending": pending})
+    assert "is asking to use the full vault connector as Sam." in page.text
+
+    as_alex = {"pending": pending, "password": PASSWORD, "totp": totp["alex"].at(site.clock.now)}
+    refused = browser.post("/login", data=as_alex)
+    assert refused.status_code == 401
+    assert site.throttle.delay_for(OWNER_ADDR) > 0
+
+    site.ticker.now += 60
+    as_sam = {
+        "pending": pending,
+        "password": PASSWORD + " for sam",
+        "totp": totp["sam"].at(site.clock.now),
+    }
+    signed_in = browser.post("/login", data=as_sam)
+    assert signed_in.status_code == 302
+    code = asyncio.run(
+        site.provider.load_authorization_code(site.client, _query(signed_in.headers["location"])["code"])
+    )
+    assert code is not None and code.subject == "sam"
+
+    alex_pending = site.start()
+    assert "connector as Alex." in browser.get("/login", params={"pending": alex_pending}).text
+    site.ticker.now += 60
+    alex_now = {"pending": alex_pending, "password": PASSWORD, "totp": totp["alex"].at(site.clock.now)}
+    assert browser.post("/login", data=alex_now).status_code == 302
+
+
+def test_a_person_without_a_password_cannot_sign_in(
+    tmp_path: Path, make_people: Callable[..., tuple[Person, Person]]
+) -> None:
+    site = Site(tmp_path, password=False, people=make_people())
+    set_password(site.store, "alex", PASSWORD)
+    totp_setup(site.store, "alex", "Alex")
+    pending = site.start(f"{PUBLIC_URL}/sam/mcp/limited")
+
+    refused = site.browser().post(
+        "/login", data={"pending": pending, "password": PASSWORD, "totp": "123456"}
+    )
+    assert refused.status_code == 401
+    assert "The connector has no password set yet." in refused.text

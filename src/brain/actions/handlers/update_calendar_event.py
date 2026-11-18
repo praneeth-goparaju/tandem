@@ -6,6 +6,7 @@ from datetime import UTC, datetime, time
 from datetime import date as _date
 from types import ModuleType
 from typing import Any, cast
+from urllib.parse import unquote, urlsplit
 
 from vobject.icalendar import utc as _VOBJECT_UTC
 
@@ -129,12 +130,16 @@ def _event_at(client, url: str):
     return event_cls(client=client, url=url, parent=calendar_cls(client=client, url=calendar_url))
 
 
-def _event_involves_others_sync(event_url: str) -> bool:
-    import vobject
-
+def _client(apple_id: str | None) -> Any:
     from src.brain.mcp.tools._icloud import caldav_client
 
-    event = _event_at(caldav_client(), assert_icloud_host(event_url.strip()))
+    return caldav_client() if apple_id is None else caldav_client(apple_id)
+
+
+def _event_involves_others_sync(event_url: str, apple_id: str | None = None) -> bool:
+    import vobject
+
+    event = _event_at(_client(apple_id), assert_icloud_host(event_url.strip()))
     event.load()
     cal = vobject.readOne(event.data)
     return any(
@@ -143,21 +148,36 @@ def _event_involves_others_sync(event_url: str) -> bool:
     )
 
 
-async def event_involves_others(event_url: str) -> bool:
+def calendar_of(event_url: str, *, apple_id: str | None = None) -> str | None:
+    """The display name of the calendar that holds the event at ``event_url``, or None when
+    no calendar of the account holds it. Blocks on CalDAV, so call it from a worker thread."""
+    from src.brain.actions.handlers.create_calendar_event import _calendar_display_name
+
+    url = assert_icloud_host(event_url.strip())
+    folder = unquote(urlsplit(url).path).rsplit("/", 1)[0].rstrip("/")
+    for calendar in _client(apple_id).principal().calendars():
+        path = unquote(urlsplit(str(getattr(calendar, "url", ""))).path).rstrip("/")
+        if path and path == folder:
+            return _calendar_display_name(calendar)
+    return None
+
+
+async def event_involves_others(event_url: str, *, apple_id: str | None = None) -> bool:
     """True when the event has attendees or an organizer, or cannot be checked.
 
     An update to such an event can reach other people, so it keeps its approval tap.
+    ``apple_id`` picks an iCloud account other than the environment's.
     """
     try:
-        return await asyncio.to_thread(_event_involves_others_sync, event_url)
+        return await asyncio.to_thread(_event_involves_others_sync, event_url, apple_id)
     except Exception:  # noqa: BLE001
         return True
 
 
-def _execute_sync(payload: dict[str, Any]) -> dict[str, Any]:
+def _execute_sync(payload: dict[str, Any], apple_id: str | None = None) -> dict[str, Any]:
     import vobject
 
-    from src.brain.mcp.tools._icloud import ICloudNotConfigured, caldav_client
+    from src.brain.mcp.tools._icloud import ICloudNotConfigured
 
     raw_url = (payload.get("event_url") or "").strip()
     if not raw_url:
@@ -177,7 +197,7 @@ def _execute_sync(payload: dict[str, Any]) -> dict[str, Any]:
         )}
 
     try:
-        client = caldav_client()
+        client = _client(apple_id)
     except ICloudNotConfigured as e:
         return {"ok": False, "result": str(e)}
 
@@ -220,5 +240,6 @@ def _execute_sync(payload: dict[str, Any]) -> dict[str, Any]:
     return {"ok": False, "result": "CalDAV update lost two ETag races — manual retry needed"}
 
 
-async def execute(payload: dict[str, Any]) -> dict[str, Any]:
-    return await asyncio.to_thread(_execute_sync, payload)
+async def execute(payload: dict[str, Any], *, apple_id: str | None = None) -> dict[str, Any]:
+    """Update the event; ``apple_id`` picks an iCloud account other than the environment's."""
+    return await asyncio.to_thread(_execute_sync, payload, apple_id)

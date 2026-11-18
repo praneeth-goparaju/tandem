@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import stat
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -96,3 +98,62 @@ def test_purge_after_90_days(tmp_path: Path) -> None:
         store.get(edit_id)
     with pytest.raises(KeyError):
         store.take_held(held_id)
+
+
+_V1_SCHEMA = (
+    "CREATE TABLE edits (edit_id TEXT PRIMARY KEY, rel TEXT NOT NULL, old TEXT NOT NULL,"
+    " new TEXT NOT NULL, hash_after TEXT NOT NULL, start INTEGER NOT NULL,"
+    " created_at TEXT NOT NULL)",
+    "CREATE INDEX edits_created_at ON edits (created_at)",
+    "CREATE TABLE held (held_id TEXT PRIMARY KEY, rel TEXT NOT NULL, old TEXT NOT NULL,"
+    " new TEXT NOT NULL, expected_hash TEXT NOT NULL, reason TEXT NOT NULL,"
+    " created_at TEXT NOT NULL)",
+    "CREATE INDEX held_created_at ON held (created_at)",
+)
+
+
+def build_undo_v1(db_path: Path, edits: list[tuple[str, ...]], held: list[tuple[str, ...]]) -> None:
+    """Write an ``undo.db`` in the shape of schema version 1 with the given rows."""
+    with closing(sqlite3.connect(db_path)) as conn, conn:
+        for statement in _V1_SCHEMA:
+            conn.execute(statement)
+        conn.execute("PRAGMA user_version = 1")
+        conn.executemany("INSERT INTO edits VALUES (?, ?, ?, ?, ?, ?, ?)", edits)
+        conn.executemany("INSERT INTO held VALUES (?, ?, ?, ?, ?, ?, ?)", held)
+
+
+def test_a_version_1_undo_db_is_upgraded_and_its_rows_go_to_the_first_person(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "undo.db"
+    now = datetime.now(UTC).isoformat(timespec="microseconds")
+    build_undo_v1(
+        db_path,
+        [("e1", "Notes/A.md", "a", "b", "c" * 64, "0", now)],
+        [("h1", "Notes/A.md", "a", "b", "c" * 64, "fix the typo", now)],
+    )
+
+    store = UndoStore(db_path)
+    store.adopt("alex")
+
+    with closing(sqlite3.connect(db_path)) as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert store.get("e1").person == "alex"
+    assert store.take_held("h1").person == "alex"
+    assert store.edits_since(datetime.now(UTC) - timedelta(hours=1), "alex") == 1
+    assert store.edits_since(datetime.now(UTC) - timedelta(hours=1), "sam") == 0
+
+
+def test_edits_and_held_edits_carry_their_person(tmp_path: Path) -> None:
+    store = UndoStore(tmp_path / "undo.db")
+    since = datetime.now(UTC) - timedelta(hours=1)
+    edit_id = store.record("Notes/A.md", "a", "b", "c" * 64, 0, "sam")
+    for _ in range(2):
+        store.record("Notes/A.md", "a", "b", "c" * 64, 0, "alex")
+    held_id = store.hold("Notes/A.md", "a", "b", "c" * 64, "a held edit", "sam")
+
+    assert store.get(edit_id).person == "sam"
+    assert store.take_held(held_id).person == "sam"
+    assert store.edits_since(since, "sam") == 1
+    assert store.edits_since(since, "alex") == 2
+    assert store.edits_since(since) == 0

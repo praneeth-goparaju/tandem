@@ -71,7 +71,14 @@ class CommandBackend:
     def __init__(self, settings: BridgeSettings):
         self.settings = settings
 
-    def invoke(self, operation: str, payload: dict[str, Any] | None = None) -> Any:
+    def invoke(
+        self,
+        operation: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        environment: Mapping[str, str] | None = None,
+    ) -> Any:
+        """Run the bridge once; ``environment`` adds or replaces variables for that process only."""
         if operation not in {"list", "call"}:
             raise BackendError(f"unsupported backend operation: {operation}")
         if not self.settings.directory.is_dir():
@@ -93,6 +100,7 @@ class CommandBackend:
             timeout_seconds=self.settings.timeout_seconds,
             max_stdout_bytes=self.settings.max_output_bytes,
             max_stderr_bytes=min(self.settings.max_output_bytes, 64 * 1024),
+            environment=environment,
         )
         if completed.returncode != 0:
             raise BackendError(f"backend {operation} failed")
@@ -116,8 +124,10 @@ def _run_bounded(
     timeout_seconds: float,
     max_stdout_bytes: int,
     max_stderr_bytes: int,
+    environment: Mapping[str, str] | None = None,
 ) -> _Completed:
     """Run a bridge while bounding both captured streams during execution."""
+    process_environment = {**os.environ, **(environment or {})}
     try:
         process = subprocess.Popen(  # noqa: S603 - fixed executable and no shell
             command,
@@ -125,7 +135,7 @@ def _run_bounded(
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            env=os.environ.copy(),
+            env=process_environment,
         )
     except OSError as exc:
         raise BackendError(f"could not start backend: {exc.strerror}") from exc

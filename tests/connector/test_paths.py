@@ -212,3 +212,13 @@ def test_instruction_and_hidden_files_stay_readable(vault: Path) -> None:
 def test_ordinary_names_with_dots_stay_writable(vault: Path) -> None:
     for rel in ("Notes/v1.2 plan.md", "Notes/Mr. Smith.md", "Notes/claude notes.md"):
         assert check_writable(vault, rel).name == PurePosixPath(rel).name
+
+
+def test_check_readable_refuses_hidden_parts(vault: Path) -> None:
+    from src.brain.connector.vault.paths import check_readable
+
+    with pytest.raises(PathRefused, match="hidden files and folders cannot be read"):
+        check_readable(vault, "Notes/.secret/a.md")
+    with pytest.raises(PathRefused):
+        check_readable(vault, "Notes/../.claude/x.json")
+    assert check_readable(vault, "Notes/a.md") == resolve_in_vault(vault, "Notes/a.md")

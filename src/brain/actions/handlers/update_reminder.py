@@ -13,6 +13,20 @@ from src.brain.actions.outcomes import (
 )
 
 
+def list_of(reminder_id: str) -> str | None:
+    """The title of the Reminders list that holds ``reminder_id``, or None when there is no
+    such reminder. Blocks on EventKit, so call it from a worker thread."""
+    from src.brain.mcp.tools._icloud import eventkit_store
+
+    identifier = reminder_id.strip()
+    if not identifier:
+        return None
+    reminder = eventkit_store().calendarItemWithIdentifier_(identifier)
+    if reminder is None or reminder.calendar() is None:
+        return None
+    return str(reminder.calendar().title())
+
+
 async def execute(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         return await asyncio.to_thread(_execute_sync, payload)

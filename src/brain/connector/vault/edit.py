@@ -27,7 +27,7 @@ these hold:
   passage and the new text lie on, and the passage and new text themselves;
 - it leaves the frontmatter, the leading ``---`` block, as it was, except the
   value of ``status`` in notes under the actions folder of the vault layout;
-- fewer than 20 edits ran in the last 60 minutes;
+- fewer than 20 edits by the same person's chats ran in the last 60 minutes;
 - the chat has not read mail in the last 30 minutes.
 
 Lines are counted by comparing the whole note before and after the edit with
@@ -37,6 +37,9 @@ three are turned into ``\\n`` before anything is counted; otherwise a lone
 recorded in the undo store with the note's hash after the edit. ``undo`` puts
 the old passage back only while the note still has that hash, so it never
 overwrites a later change.
+
+A held edit can be confirmed only by the person whose chat made it. Either
+person can undo any edit.
 """
 
 from __future__ import annotations
@@ -45,12 +48,14 @@ import difflib
 import posixpath
 import re
 import unicodedata
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
 from src.brain.connector.layout import DEFAULT_LAYOUT
+from src.brain.connector.people import DEFAULT_PERSON_KEY, DEFAULT_PERSON_NAME
 from src.brain.connector.vault.coordination import StaleVersion, coordinated_write
 from src.brain.connector.vault.paths import OWNER_ONLY, check_writable
 from src.brain.connector.vault.read import ReadResult, _split_lines
@@ -267,10 +272,11 @@ def _write_edit(
     old: str,
     new: str,
     expected_hash: str,
+    person: str,
 ) -> tuple[str, ReadResult]:
     index = text.index(old)
     written = coordinated_write(path, text[:index] + new + text[index + len(old) :], expected_hash)
-    edit_id = store.record(rel, old, new, written, index)
+    edit_id = store.record(rel, old, new, written, index, person)
     return edit_id, _read_back(vault, rel, written)
 
 
@@ -286,8 +292,12 @@ def apply_edit(
     *,
     actions_dir: str = DEFAULT_LAYOUT.actions_dir,
     owner_only: tuple[str, ...] = OWNER_ONLY,
+    person: str = DEFAULT_PERSON_KEY,
 ) -> EditResult:
     """Replace the one place ``old`` appears in the note with ``new``, or hold the edit.
+
+    ``person`` is whose chat asks: the edit limit counts that person's edits,
+    and the edit or held edit is recorded under them.
 
     Raises ``PathRefused`` for a path a chat may not write, ``StaleVersion``
     when the note's hash is not ``expected_hash`` or the note changes while it
@@ -308,16 +318,18 @@ def apply_edit(
         raise EditRefused(
             f"the passage appears {found} times in {rel}; include more of the text around it"
         )
-    edits_last_hour = store.edits_since(datetime.now(UTC) - timedelta(hours=1))
+    edits_last_hour = store.edits_since(datetime.now(UTC) - timedelta(hours=1), person)
     decision = decide(
         rel, text, old, new, edits_last_hour, mail_read_recently, actions_dir=actions_dir
     )
     if not decision.allow:
-        held_id = store.hold(rel, old, new, expected_hash, reason)
+        held_id = store.hold(rel, old, new, expected_hash, reason, person)
         return EditResult(
             status="held", edit_id=None, held_id=held_id, reason=decision.reason, read_back=None
         )
-    edit_id, read_back = _write_edit(vault, store, path, rel, text, old, new, expected_hash)
+    edit_id, read_back = _write_edit(
+        vault, store, path, rel, text, old, new, expected_hash, person
+    )
     return EditResult(
         status="done", edit_id=edit_id, held_id=None, reason=decision.reason, read_back=read_back
     )
@@ -327,19 +339,26 @@ def confirm_held(
     vault: Path,
     store: UndoStore,
     held_id: str,
+    person: str = DEFAULT_PERSON_KEY,
+    person_names: Mapping[str, str] | None = None,
     *,
     owner_only: tuple[str, ...] = OWNER_ONLY,
 ) -> EditResult:
-    """Run an edit the rules held, once the owner has approved it.
+    """Run an edit the rules held, once ``person``, whose chat made it, has approved it.
 
     Raises ``StaleVersion`` when the note changed since the edit was held; the
     held edit then stays in the store. Raises ``EditRefused`` when there is no
-    held edit with this id.
+    held edit with this id, or when it was held for another person.
+    ``person_names`` gives the names the refusal shows.
     """
+    names = person_names or {}
     try:
         held = store.take_held(held_id)
     except KeyError:
         raise EditRefused(f"there is no held edit {held_id}; it may have run already") from None
+    if held.person != person:
+        name = names.get(held.person) or held.person or "another person"
+        raise EditRefused(f"this edit is held for {name}'s approval; only {name} can approve it")
     path, text, current = _read_current(vault, held.rel, owner_only)
     if current != held.expected_hash:
         raise StaleVersion(
@@ -347,14 +366,14 @@ def confirm_held(
             "read the note and ask for the edit again"
         )
     edit_id, read_back = _write_edit(
-        vault, store, path, held.rel, text, held.old, held.new, held.expected_hash
+        vault, store, path, held.rel, text, held.old, held.new, held.expected_hash, person
     )
     store.drop_held(held_id)
     return EditResult(
         status="done",
         edit_id=edit_id,
         held_id=held_id,
-        reason="approved by the owner",
+        reason=f"approved by {names.get(person, DEFAULT_PERSON_NAME)}",
         read_back=read_back,
     )
 

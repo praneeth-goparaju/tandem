@@ -45,3 +45,31 @@ timezone:
 
 # The port the connector listens on, on 127.0.0.1 only. Default: 8788
 # port: 8788
+
+# The people who sign in. Leave the section out for one person (the addresses
+# /mcp and /mcp/limited, every tool, every list and calendar). Each person gets
+# the addresses /<prefix>/mcp and /<prefix>/mcp/limited, their own password and
+# code (set-password --person KEY, totp-setup --person KEY), their own
+# instructions file in this folder and their own daily notes. Exactly one
+# person has the prefix "" and so /mcp; sign-ins from before this section
+# existed belong to that person. A key and a prefix hold only lower case
+# letters, digits and -. Optional per person: daily_notes_dir and
+# daily_note_template (default: the ones in profile.yaml), icloud_apple_id and
+# icloud_imap_user (default: this Mac's iCloud account; the app password is
+# read from the login Keychain under that Apple ID, never from this file),
+# exclude_tools (tool names not served to this person), reminder_lists and
+# calendars (default: every list and calendar).
+# people:
+#   alex:
+#     name: Alex
+#     prefix: ""
+#     instructions: connector_instructions.yaml
+#   sam:
+#     name: Sam
+#     prefix: sam
+#     instructions: connector_instructions.sam.yaml
+#     daily_notes_dir: "01 - Daily Notes/Sam"
+#     daily_note_template: "Daily Note - Sam.md"
+#     icloud_apple_id: sam@example.com
+#     exclude_tools: [mail_archive]
+#     reminder_lists: [Family, Shopping]

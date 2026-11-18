@@ -27,6 +27,10 @@ Rules:
 {% endif %}
 {% set rule.n = rule.n + 1 %}
 {{ rule.n }}. Silence in the vault is evidence about the logging, not the life. Never report a lapse, a gap or "never happened" without a vault entry that records the miss, an outside record, or a direct answer from {{ owner }}.
+{% if others %}
+{% set rule.n = rule.n + 1 %}
+{{ rule.n }}. This vault is shared with {{ others | join(" and ") }}. You are working with {{ owner }}; notes, tasks and daily notes of the other person are theirs unless {{ owner }} says otherwise.
+{% endif %}
 {% if privacy_rule %}
 {% set rule.n = rule.n + 1 %}
 {{ rule.n }}. {{ privacy_rule }}

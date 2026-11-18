@@ -165,6 +165,41 @@ def test_instructions_with_a_bad_profile_routing_row_errors(
     assert "reminders.routing[0].list" in issues[0].message
 
 
+def test_instructions_at_the_limit_fail_once_a_second_person_adds_a_rule(
+    overlay: Path, tmp_path: Path
+) -> None:
+    """With two people the connector adds one rule; doctor must count it, as the server does."""
+    from src.brain.connector.instructions import MAX_LINES
+
+    def rules(count: int) -> None:
+        (overlay / "connector_instructions.yaml").write_text(
+            "extra_rules:\n" + "".join(f"  - rule number {n}\n" for n in range(count)),
+            encoding="utf-8",
+        )
+
+    write_config(overlay, tmp_path)
+    count = 1
+    rules(count)
+    while not checks.check_connector_instructions(None, Path(".")):
+        count += 1
+        assert count < MAX_LINES
+        rules(count)
+    rules(count - 1)  # exactly at the limit for one person
+    assert checks.check_connector_instructions(None, Path(".")) == []
+
+    with (overlay / "vault_connector.yaml").open("a", encoding="utf-8") as handle:
+        handle.write(
+            "people:\n"
+            "  alex:\n    name: Alex\n    prefix: \"\"\n"
+            "    instructions: connector_instructions.yaml\n"
+            "  sam:\n    name: Sam\n    prefix: sam\n"
+        )
+    issues = checks.check_connector_instructions(None, Path("."))
+    assert len(issues) == 1
+    assert "Alex" in issues[0].message
+    assert "lines long" in issues[0].message
+
+
 def test_instructions_render_cleanly(overlay: Path, tmp_path: Path) -> None:
     write_config(overlay, tmp_path)
     assert checks.check_connector_instructions(None, Path(".")) == []
@@ -306,3 +341,64 @@ def test_the_daily_note_template_follows_the_profile(overlay: Path, tmp_path: Pa
 def test_no_template_warning_without_a_vault(overlay: Path, tmp_path: Path) -> None:
     write_config(overlay, tmp_path, vault_path=str(tmp_path / "nowhere"))
     assert checks.check_connector_daily_note_template(None, Path(".")) == []
+
+
+PEOPLE = (
+    "{alex: {name: Alex, prefix: ''},"
+    " sam: {name: Sam, prefix: sam, icloud_apple_id: sam@example.com}}"
+)
+
+
+def _settings(data: Path, rows: list[tuple[str, str]]) -> None:
+    data.mkdir(mode=0o700, exist_ok=True)
+    with sqlite3.connect(data / "auth.db") as conn:
+        conn.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        conn.executemany("INSERT INTO settings VALUES (?, ?)", rows)
+
+
+def test_sign_in_is_checked_for_each_person(overlay: Path, tmp_path: Path) -> None:
+    paths = write_config(overlay, tmp_path, people=PEOPLE)
+    _settings(
+        paths["data"],
+        [("password_hash", "hash-secret"), ("totp_secret", "totp-secret"), ("password_hash:sam", "s")],
+    )
+
+    issues = checks.check_connector_sign_in(None, Path("."))
+
+    assert len(issues) == 1
+    assert "sam" in issues[0].message
+    assert "totp-setup --person sam" in issues[0].message
+    assert "set-password" not in issues[0].message
+    assert "secret" not in messages(issues)
+
+
+def test_people_check_lists_the_addresses_and_each_keychain_item(
+    overlay: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_config(overlay, tmp_path, people=PEOPLE, integrations="{mail: imap}")
+    keychain: dict[str, str] = {}
+    monkeypatch.setattr(
+        "src.brain.mcp.tools._icloud._keychain_password", lambda apple_id: keychain.get(apple_id, "")
+    )
+
+    missing = checks.check_connector_people(None, Path("."))
+    keychain["sam@example.com"] = "app-password"
+    found = checks.check_connector_people(None, Path("."))
+
+    text = messages(missing)
+    for address in ("/mcp", "/mcp/limited", "/sam/mcp", "/sam/mcp/limited"):
+        assert f"https://vault.example.com{address}" in text
+    assert [issue.severity for issue in missing] == ["info", None]
+    assert "sam@example.com" in missing[1].message and "Keychain" in missing[1].message
+    assert [issue.severity for issue in found] == ["info"]
+    assert "app-password" not in messages(found)
+
+
+def test_people_check_for_one_owner_names_the_two_addresses(overlay: Path, tmp_path: Path) -> None:
+    write_config(overlay, tmp_path)
+
+    (issue,) = checks.check_connector_people(None, Path("."))
+
+    assert issue.severity == "info"
+    assert "https://vault.example.com/mcp, https://vault.example.com/mcp/limited" in issue.message
+

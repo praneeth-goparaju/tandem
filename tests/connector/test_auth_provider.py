@@ -7,7 +7,9 @@ import os
 import secrets
 import sqlite3
 import stat
+from collections.abc import Callable
 from contextlib import closing
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -37,6 +39,7 @@ from src.brain.connector.auth.provider import VaultOAuthProvider, set_password, 
 from src.brain.connector.auth.store import MAX_IDLE_CLIENTS, AuthStore
 from src.brain.connector.auth.throttle import Throttle
 from src.brain.connector.config import DEFAULT_REDIRECT_URIS, ConnectorConfig
+from src.brain.connector.people import Person
 
 PUBLIC_URL = "https://vault.example.com"
 FULL = f"{PUBLIC_URL}/mcp"
@@ -153,7 +156,7 @@ def test_auth_db_is_private_with_its_tables(tmp_path: Path) -> None:
         tables = {
             row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
         }
-    assert {"clients", "pending", "codes", "tokens", "settings"} <= tables
+    assert {"clients", "pending", "codes", "tokens", "settings", "mail_reads"} <= tables
 
     os.chmod(db_path, 0o644)
     AuthStore(db_path)
@@ -187,8 +190,8 @@ def test_register_claude_redirect_ok(tmp_path: Path) -> None:
 def test_code_requires_pkce(tmp_path: Path) -> None:
     store = AuthStore(tmp_path / "auth.db")
     provider = VaultOAuthProvider(_config(tmp_path), store)
-    set_password(store, PASSWORD)
-    totp = pyotp.TOTP(_query(totp_setup(store))["secret"])
+    set_password(store, "owner", PASSWORD)
+    totp = pyotp.TOTP(_query(totp_setup(store, "owner", "owner"))["secret"])
     app = Starlette(
         routes=[
             *create_auth_routes(
@@ -288,7 +291,9 @@ def test_token_bound_to_resource(tmp_path: Path) -> None:
     assert not admitted(FULL)
 
     for resource in (f"{PUBLIC_URL}/other", "https://evil.example/mcp", None):
-        pending = store.add_pending(client.client_id, _params(resource).model_dump_json())
+        pending = store.add_pending(
+            client.client_id, _params(resource).model_dump_json(), "owner"
+        )
         code = asyncio.run(provider.load_authorization_code(client, _code_from(provider, pending)))
         assert code is not None
         with pytest.raises(TokenError) as refused:
@@ -538,26 +543,26 @@ def test_tokens_stored_hashed(tmp_path: Path) -> None:
 def test_set_password_and_totp_setup(tmp_path: Path) -> None:
     db_path = tmp_path / "auth.db"
     store = AuthStore(db_path)
-    set_password(store, PASSWORD)
+    set_password(store, "owner", PASSWORD)
     with closing(sqlite3.connect(db_path)) as conn:
         values = [row[0] for row in conn.execute("SELECT value FROM settings")]
     assert len(values) == 1 and values[0].startswith("$argon2id$")
     assert PASSWORD.encode() not in db_path.read_bytes()
     with pytest.raises(ValueError):
-        set_password(store, "")
+        set_password(store, "owner", "")
 
-    uri = totp_setup(store)
+    uri = totp_setup(store, "owner", "owner")
     secret = _query(uri)["secret"]
     assert uri == f"otpauth://totp/Vault:owner?secret={secret}&issuer=Vault"
     assert len(base64.b32decode(secret)) == 20
-    assert totp_setup(store) != uri
+    assert totp_setup(store, "owner", "owner") != uri
 
 
 def test_idle_client_registrations_are_capped(tmp_path: Path) -> None:
     db_path = tmp_path / "auth.db"
     store = AuthStore(db_path)
     store.add_client("live", "{}")
-    store.add_tokens("live", [], "https://vault.example.com/mcp", "access", "refresh")
+    store.add_tokens("live", [], "https://vault.example.com/mcp", "access", "refresh", "owner")
     for n in range(MAX_IDLE_CLIENTS + 5):
         store.add_client(f"idle-{n}", "{}")
     assert store.get_client("live") is not None
@@ -566,3 +571,274 @@ def test_idle_client_registrations_are_capped(tmp_path: Path) -> None:
     assert store.get_client("idle-5") is not None
     assert store.get_client(f"idle-{MAX_IDLE_CLIENTS + 4}") is not None
     assert _rows(db_path, "clients") == MAX_IDLE_CLIENTS + 1
+
+
+def test_mail_reads_are_kept_and_expire(tmp_path: Path) -> None:
+    clock = Clock()
+    store = AuthStore(tmp_path / "auth.db", clock=clock)
+    hold = timedelta(minutes=30)
+
+    assert not store.mail_read_recently(["sign_in:a"], hold)
+    store.mark_mail_read(["sign_in:a", "session:x"])
+
+    assert store.mail_read_recently(["sign_in:a"], hold)
+    assert store.mail_read_recently(["other", "session:x"], hold)
+    assert not store.mail_read_recently(["other"], hold)
+    assert not store.mail_read_recently([], hold)
+    assert AuthStore(tmp_path / "auth.db", clock=clock).mail_read_recently(["sign_in:a"], hold)
+
+    clock.now += timedelta(minutes=31)
+    assert not store.mail_read_recently(["sign_in:a"], hold)
+    store.mark_mail_read(["sign_in:b"])
+    with closing(sqlite3.connect(tmp_path / "auth.db")) as conn:
+        keys = {row[0] for row in conn.execute("SELECT key FROM mail_reads")}
+    assert keys == {"sign_in:b"}
+
+
+def test_a_database_without_the_mail_reads_table_is_upgraded(tmp_path: Path) -> None:
+    db_path = tmp_path / "auth.db"
+    AuthStore(db_path)
+    with closing(sqlite3.connect(db_path)) as conn, conn:
+        conn.execute("DROP TABLE mail_reads")
+
+    store = AuthStore(db_path)
+    store.mark_mail_read(["sign_in:a"])
+
+    assert store.mail_read_recently(["sign_in:a"], timedelta(minutes=30))
+
+
+_V1_SCHEMA = (
+    "CREATE TABLE clients (client_id TEXT PRIMARY KEY, info TEXT NOT NULL)",
+    "CREATE TABLE pending (pending_id TEXT PRIMARY KEY, client_id TEXT NOT NULL,"
+    " params TEXT NOT NULL, expires_at INTEGER NOT NULL)",
+    "CREATE TABLE codes (code_hash TEXT PRIMARY KEY, client_id TEXT NOT NULL,"
+    " params TEXT NOT NULL, expires_at INTEGER NOT NULL)",
+    "CREATE TABLE tokens (token_hash TEXT PRIMARY KEY,"
+    " kind TEXT NOT NULL CHECK (kind IN ('access', 'refresh')), client_id TEXT NOT NULL,"
+    " sign_in_id TEXT NOT NULL, scopes TEXT NOT NULL, resource TEXT NOT NULL,"
+    " expires_at INTEGER NOT NULL)",
+    "CREATE INDEX tokens_sign_in_id ON tokens (sign_in_id)",
+    "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+    "CREATE TABLE mail_reads (key TEXT PRIMARY KEY, read_at INTEGER NOT NULL)",
+)
+
+
+def build_auth_v1(db_path: Path, *, password_hash: str, secret: str, access: str, refresh: str) -> None:
+    """Write an ``auth.db`` in the shape of schema version 1, with one sign-in's token pair."""
+    expires = int(datetime.now(UTC).timestamp()) + 3600
+    with closing(sqlite3.connect(db_path)) as conn, conn:
+        for statement in _V1_SCHEMA:
+            conn.execute(statement)
+        conn.execute("PRAGMA user_version = 1")
+        conn.executemany(
+            "INSERT INTO settings (key, value) VALUES (?, ?)",
+            [("password_hash", password_hash), ("totp_secret", secret), ("totp_last_step", "7")],
+        )
+        conn.execute("INSERT INTO clients VALUES ('client-1', '{}')")
+        for kind, token in (("access", access), ("refresh", refresh)):
+            conn.execute(
+                "INSERT INTO tokens VALUES (?, ?, 'client-1', 'sign-in-1', '[]', ?, ?)",
+                (hashlib.sha256(token.encode()).hexdigest(), kind, FULL, expires),
+            )
+        conn.execute(
+            "INSERT INTO pending VALUES ('p1', 'client-1', '{}', ?)", (expires,)
+        )
+
+
+def test_a_version_1_auth_db_is_upgraded_and_its_token_kept(tmp_path: Path) -> None:
+    db_path = tmp_path / "auth.db"
+    build_auth_v1(db_path, password_hash="old-hash", secret="SECRET", access="old-a", refresh="old-r")
+
+    store = AuthStore(db_path)
+    store.adopt("alex")
+
+    with closing(sqlite3.connect(db_path)) as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+    row = store.get_token("old-a", "access")
+    assert row is not None
+    assert (row.person, row.sign_in_id, row.resource) == ("alex", "sign-in-1", FULL)
+    refresh = store.get_token("old-r", "refresh")
+    assert refresh is not None and refresh.person == "alex"
+    assert store.get_pending("p1") is not None and store.get_pending("p1").person == "alex"  # type: ignore[union-attr]
+    assert store.get_setting("password_hash", "alex") == "old-hash"
+    assert store.get_setting("totp_secret", "alex") == "SECRET"
+    assert store.get_setting("totp_last_step", "alex") == "7"
+    assert store.get_setting("password_hash", "sam") is None
+
+
+def test_adopt_keeps_a_person_setting_already_there(tmp_path: Path) -> None:
+    db_path = tmp_path / "auth.db"
+    build_auth_v1(db_path, password_hash="old-hash", secret="SECRET", access="a", refresh="r")
+    store = AuthStore(db_path)
+    store.set_setting("password_hash", "new-hash", "alex")
+
+    store.adopt("alex")
+    store.adopt("alex")
+
+    assert store.get_setting("password_hash", "alex") == "new-hash"
+    assert store.get_setting("totp_secret", "alex") == "SECRET"
+
+
+def test_adopt_moves_the_single_owner_state_to_the_first_named_person(tmp_path: Path) -> None:
+    store = AuthStore(tmp_path / "auth.db")
+    store.adopt("owner")
+    store.set_setting("password_hash", "owner-hash", "owner")
+    store.add_tokens("client-1", [], FULL, "a", "r", "owner")
+
+    store.adopt("alex")
+
+    row = store.get_token("a", "access")
+    assert row is not None and row.person == "alex"
+    assert store.get_setting("password_hash", "alex") == "owner-hash"
+
+
+def test_code_steps_are_kept_per_person(tmp_path: Path) -> None:
+    store = AuthStore(tmp_path / "auth.db")
+
+    assert store.claim_code_step(100, "alex")
+    assert store.claim_code_step(100, "sam")
+    assert not store.claim_code_step(100, "sam")
+    assert not store.claim_code_step(99, "alex")
+    assert store.claim_code_step(101, "alex")
+
+
+def test_a_pending_sign_in_keeps_its_person_through_code_and_tokens(tmp_path: Path) -> None:
+    store = AuthStore(tmp_path / "auth.db")
+    pending = store.add_pending("client-1", "{}", "sam")
+
+    got = store.get_pending(pending)
+    assert got is not None and got.person == "sam"
+    code_row = store.pending_to_code(pending, "the-code")
+    assert code_row is not None and code_row.person == "sam"
+    looked = store.get_code("the-code", "client-1")
+    assert looked is not None and looked.person == "sam"
+    taken = store.take_code("the-code", "client-1")
+    assert taken is not None and taken.person == "sam"
+
+    store.add_tokens("client-1", [], f"{PUBLIC_URL}/sam/mcp", "a1", "r1", taken.person)
+    access = store.get_token("a1", "access")
+    assert access is not None and access.person == "sam"
+    assert store.rotate_refresh("r1", "client-1", [], "a2", "r2")
+    renewed = store.get_token("a2", "access")
+    assert renewed is not None and renewed.person == "sam"
+    renewed_refresh = store.get_token("r2", "refresh")
+    assert renewed_refresh is not None and renewed_refresh.person == "sam"
+
+
+def test_revoke_all_for_one_person(tmp_path: Path) -> None:
+    store = AuthStore(tmp_path / "auth.db")
+    store.add_tokens("client-1", [], FULL, "alex-a", "alex-r", "alex")
+    store.add_tokens("client-1", [], f"{PUBLIC_URL}/sam/mcp", "sam-a", "sam-r", "sam")
+    alex_pending = store.add_pending("client-1", "{}", "alex")
+    sam_pending = store.add_pending("client-1", "{}", "sam")
+    store.pending_to_code(store.add_pending("client-1", "{}", "sam"), "sam-code")
+
+    assert store.revoke_all("sam") == 3
+
+    assert store.get_token("sam-a", "access") is None
+    assert store.get_token("sam-r", "refresh") is None
+    assert store.get_code("sam-code", "client-1") is None
+    assert store.get_pending(sam_pending) is None
+    assert store.get_token("alex-a", "access") is not None
+    assert store.get_pending(alex_pending) is not None
+    assert store.revoke_all() == 2
+    assert store.get_token("alex-a", "access") is None
+
+
+SAM_FULL = f"{PUBLIC_URL}/sam/mcp"
+
+
+def _two_people(tmp_path: Path, people: tuple[Person, ...]) -> tuple[AuthStore, VaultOAuthProvider]:
+    store = AuthStore(tmp_path / "auth.db")
+    config = replace(_config(tmp_path), people=people)
+    return store, VaultOAuthProvider(config, store)
+
+
+def test_each_address_is_bound_to_its_person(
+    tmp_path: Path, make_people: Callable[..., tuple[Person, Person]]
+) -> None:
+    store, provider = _two_people(tmp_path, make_people())
+    client = _registered(provider)
+
+    login = asyncio.run(provider.authorize(client, _params(SAM_FULL)))
+    request = provider.sign_in_request(_query(login)["pending"])
+    assert request is not None
+    assert (request.person, request.person_name, request.access) == ("sam", "Sam", "full")
+    code = asyncio.run(
+        provider.load_authorization_code(client, _code_from(provider, _query(login)["pending"]))
+    )
+    assert code is not None and code.subject == "sam"
+    tokens = asyncio.run(provider.exchange_authorization_code(client, code))
+    access = _access(provider, tokens.access_token)
+    assert access is not None and access.subject == "sam"
+    assert access.resource is not None and access.resource.endswith("/sam/mcp")
+    refresh = _refresh(provider, client, tokens.refresh_token)
+    assert refresh is not None and refresh.subject == "sam"
+
+    alex = _access(provider, _tokens(provider, client, LIMITED).access_token)
+    assert alex is not None and alex.subject == "alex"
+
+    for resource in (f"{PUBLIC_URL}/pat/mcp", f"{PUBLIC_URL}/sam/mcp/other"):
+        with pytest.raises(AuthorizeError) as refused:
+            asyncio.run(provider.authorize(client, _params(resource)))
+        assert refused.value.error == "invalid_target"
+
+
+def test_a_removed_persons_tokens_are_refused_everywhere(
+    tmp_path: Path, make_people: Callable[..., tuple[Person, Person]]
+) -> None:
+    alex, sam = make_people()
+    store, provider = _two_people(tmp_path, (alex, sam))
+    client = _registered(provider)
+    sam_full = _tokens(provider, client, SAM_FULL)
+    sam_limited = _tokens(provider, client, f"{PUBLIC_URL}/sam/mcp/limited")
+    assert _access(provider, sam_full.access_token) is not None
+
+    only_alex = VaultOAuthProvider(replace(_config(tmp_path), people=(alex,)), store)
+
+    for tokens in (sam_full, sam_limited):
+        assert _access(only_alex, tokens.access_token) is None
+        assert _refresh(only_alex, client, tokens.refresh_token) is None
+
+
+def test_a_token_whose_person_does_not_own_its_address_is_refused(
+    tmp_path: Path, make_people: Callable[..., tuple[Person, Person]]
+) -> None:
+    store, provider = _two_people(tmp_path, make_people())
+    client = _registered(provider)
+    store.add_tokens(client.client_id, [], FULL, "planted-a", "planted-r", "sam")
+    store.add_tokens(client.client_id, [], FULL, "nobody-a", "nobody-r", "")
+
+    assert _access(provider, "planted-a") is None
+    assert _refresh(provider, client, "planted-r") is None
+    assert _access(provider, "nobody-a") is None
+
+    pending = store.add_pending(client.client_id, _params(SAM_FULL).model_dump_json(), "alex")
+    assert provider.sign_in_request(pending) is None
+    code = asyncio.run(provider.load_authorization_code(client, _code_from(provider, pending)))
+    assert code is not None
+    with pytest.raises(TokenError) as refused:
+        asyncio.run(provider.exchange_authorization_code(client, code))
+    assert refused.value.error == "invalid_grant"
+
+
+def test_a_token_from_before_people_works_after_the_upgrade(
+    tmp_path: Path, make_people: Callable[..., tuple[Person, Person]]
+) -> None:
+    db_path = tmp_path / "auth.db"
+    build_auth_v1(db_path, password_hash="h", secret="S", access="old-a", refresh="old-r")
+    store = AuthStore(db_path)
+    store.adopt("alex")
+    provider = VaultOAuthProvider(replace(_config(tmp_path), people=make_people()), store)
+
+    access = _access(provider, "old-a")
+    assert access is not None and (access.subject, access.resource) == ("alex", FULL)
+    refresh = asyncio.run(provider.load_refresh_token(_client(), "old-r"))
+    assert refresh is not None and refresh.subject == "alex"
+
+
+def test_the_single_owner_signs_in_as_owner(tmp_path: Path) -> None:
+    _, provider = _setup(tmp_path)
+    client = _registered(provider)
+    access = _access(provider, _tokens(provider, client).access_token)
+    assert access is not None and access.subject == "owner"

@@ -149,3 +149,70 @@ def test_default_guard_never_runs_security(monkeypatch):
 
     with pytest.raises(_icloud.ICloudNotConfigured):
         _icloud.require_creds()
+
+
+def test_a_named_account_uses_only_its_own_keychain_item(monkeypatch):
+    monkeypatch.setattr(_icloud, "ICLOUD_APPLE_ID", "alex@example.com")
+    monkeypatch.setattr(_icloud, "ICLOUD_APP_PASSWORD", "alex-secret")
+    keychain = {"alex@example.com": "alex-keychain"}
+    monkeypatch.setattr(_icloud, "_keychain_password", lambda apple_id: keychain.get(apple_id, ""))
+
+    with pytest.raises(_icloud.ICloudNotConfigured) as refused:
+        _icloud.require_creds("sam@example.com")
+    assert "sam@example.com" in str(refused.value)
+    assert "alex-secret" not in str(refused.value)
+
+    keychain["sam@example.com"] = "sam-keychain"
+    assert _icloud.require_creds("sam@example.com") == ("sam@example.com", "sam-keychain")
+    assert _icloud.require_creds() == ("alex@example.com", "alex-secret")
+
+
+def test_a_named_account_logs_in_to_its_own_mailbox(monkeypatch):
+    monkeypatch.setattr(_icloud, "ICLOUD_IMAP_USER", "alex@mail.example.com")
+    monkeypatch.setattr(_icloud, "_keychain_password", lambda apple_id: f"{apple_id}-pw")
+    logins: list[tuple[str, str]] = []
+
+    class Imap:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def login(self, user, password):
+            logins.append((user, password))
+
+        def logout(self):
+            pass
+
+        def shutdown(self):
+            pass
+
+    monkeypatch.setattr(_icloud.imaplib, "IMAP4_SSL", Imap)
+    with _icloud.imap_session("sam@example.com"):
+        pass
+    with _icloud.imap_session("sam@example.com", "sam@mail.example.com"):
+        pass
+
+    assert logins == [
+        ("sam@example.com", "sam@example.com-pw"),
+        ("sam@mail.example.com", "sam@example.com-pw"),
+    ]
+
+
+def test_a_named_account_gets_its_own_caldav_login(monkeypatch):
+    monkeypatch.setattr(_icloud, "_keychain_password", lambda apple_id: f"{apple_id}-pw")
+    made: list[dict] = []
+
+    class Session:
+        trust_env = True
+        hooks = {"pre_request": [], "response": []}
+
+    class Client:
+        def __init__(self, **kwargs):
+            made.append(kwargs)
+            self.session = Session()
+
+    import caldav
+
+    monkeypatch.setattr(caldav, "DAVClient", Client)
+    _icloud.caldav_client("sam@example.com")
+
+    assert (made[0]["username"], made[0]["password"]) == ("sam@example.com", "sam@example.com-pw")
