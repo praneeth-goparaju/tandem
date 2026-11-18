@@ -116,7 +116,7 @@ class Site:
 
     def code(self, offset: int = 0) -> str:
         assert self.totp is not None
-        return self.totp.at(self.clock.now, offset)
+        return self.totp.at(self.clock.now, counter_offset=offset)
 
     def wrong_code(self) -> str:
         valid = {self.code(offset) for offset in (-1, 0, 1)}
