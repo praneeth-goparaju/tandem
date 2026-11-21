@@ -128,6 +128,109 @@ def test_frontmatter_other_field_in_actions_held() -> None:
     assert renamed_key.reason == "changes frontmatter"
 
 
+RECORD = (
+    "---\ntype: action\naction_id: A-20261114-05\nstatus: waiting\npriority: normal\n"
+    'waiting_on: "Builder"\nfollow_up: 2026-11-20\nadded: 2026-11-14\nupdated: 2026-11-14\n'
+    "tags: [action]\n---\n# Builder replies\n\nSource: mail\n"
+)
+RECORD_REL = "Actions/A-20261114-05 - Builder replies.md"
+
+
+def test_record_state_fields_in_actions_allowed() -> None:
+    closed = _decide(
+        RECORD,
+        "status: waiting\npriority: normal\n"
+        'waiting_on: "Builder"\nfollow_up: 2026-11-20\nadded: 2026-11-14\nupdated: 2026-11-14\n',
+        "status: done\ncompleted: 2026-11-19\npriority: normal\n"
+        'waiting_on: "Builder"\nfollow_up: 2026-11-20\nadded: 2026-11-14\nupdated: 2026-11-21\n',
+        rel=RECORD_REL,
+    )
+    assert closed.allow is True
+    moved = _decide(RECORD, "follow_up: 2026-11-20", "follow_up: 2026-11-24", rel=RECORD_REL)
+    assert moved.allow is True
+    removed = _decide(RECORD, "follow_up: 2026-11-20\n", "", rel=RECORD_REL)
+    assert removed.allow is True
+    status_only = _decide(RECORD, "status: waiting", "status: dropped", rel=RECORD_REL)
+    assert status_only.allow is True
+
+
+def test_record_state_fields_with_any_other_field_held() -> None:
+    with_priority = _decide(
+        RECORD,
+        "status: waiting\npriority: normal",
+        "status: done\npriority: high",
+        rel=RECORD_REL,
+    )
+    assert with_priority.reason == "changes frontmatter"
+    new_field = _decide(
+        RECORD, "status: waiting", "status: done\nowner: someone", rel=RECORD_REL
+    )
+    assert new_field.reason == "changes frontmatter"
+    waiting_on = _decide(RECORD, 'waiting_on: "Builder"', 'waiting_on: "Bank"', rel=RECORD_REL)
+    assert waiting_on.reason == "changes frontmatter"
+    elsewhere = _decide(
+        RECORD, "updated: 2026-11-14", "updated: 2026-11-21", rel="Notes/Builder.md"
+    )
+    assert elsewhere.reason == "changes frontmatter"
+
+
+def test_record_state_lines_that_change_other_fields_held() -> None:
+    listed = RECORD.replace("tags: [action]\n", "tags:\n  - action\n")
+    above_a_list = _decide(
+        listed, "tags:\n", "tags:\ncompleted: 2026-11-19\n", rel=RECORD_REL
+    )
+    assert above_a_list.reason == "changes frontmatter"
+    block_text = _decide(RECORD, "status: waiting", "status: |", rel=RECORD_REL)
+    assert block_text.reason == "changes frontmatter"
+    long_value = _decide(
+        RECORD, "status: waiting", "status: done, owner: someone", rel=RECORD_REL
+    )
+    assert long_value.reason == "changes frontmatter"
+    twice = _decide(RECORD, "status: waiting", "status: done\nstatus: next", rel=RECORD_REL)
+    assert twice.reason == "changes frontmatter"
+    fence_gone = _decide(RECORD, "tags: [action]\n---\n", "tags: [action]\n", rel=RECORD_REL)
+    assert "changes frontmatter" in fence_gone.reason
+
+
+def test_status_edit_in_actions_runs_and_other_frontmatter_edit_is_held(
+    vault: Path, store: UndoStore
+) -> None:
+    (vault / "Actions").mkdir(exist_ok=True)
+    note = vault / RECORD_REL
+    note.write_text(RECORD, encoding="utf-8")
+    done = apply_edit(
+        vault,
+        store,
+        RECORD_REL,
+        "status: waiting\n",
+        "status: done\ncompleted: 2026-11-19\n",
+        _sha(note),
+        "the builder has answered",
+        mail_read_recently=False,
+    )
+    assert done.status == "done"
+    assert done.edit_id is not None
+    assert "status: done\ncompleted: 2026-11-19\npriority: normal\n" in note.read_text(
+        encoding="utf-8"
+    )
+    after_first = note.read_text(encoding="utf-8")
+    held = apply_edit(
+        vault,
+        store,
+        RECORD_REL,
+        "priority: normal",
+        "priority: high",
+        _sha(note),
+        "raise the priority of this record",
+        mail_read_recently=False,
+    )
+    assert held.status == "held"
+    assert held.reason == "changes frontmatter"
+    assert note.read_text(encoding="utf-8") == after_first
+    undo(vault, store, done.edit_id)
+    assert note.read_text(encoding="utf-8") == RECORD
+
+
 def test_status_exception_follows_the_actions_dir() -> None:
     open_note = _decide(
         ACTION_NOTE, "status: next", "status: done", rel="Open/A.md", actions_dir="Open"

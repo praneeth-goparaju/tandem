@@ -166,7 +166,8 @@ too slow to answer in time.
    sentence `reason`.
 2. **Runs without a tap** when all of these hold: it replaces at most 10 lines, removes no
    more than a quarter of the note, does not touch a heading, does not change frontmatter
-   other than `status` in `Actions/` notes, is outside the protected paths, and fewer than
+   other than `status`, `completed`, `follow_up` and `updated` in `Actions/` notes (each
+   with one plain word or date as its value; these lines may also be added or removed), is outside the protected paths, and fewer than
    20 edits have run in the last hour.
 3. **Held for the owner's approval** (Claude asks with an Approve/Skip question card,
    then calls `vault_edit_confirm`) otherwise, and also for every edit

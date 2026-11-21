@@ -25,8 +25,12 @@ these hold:
   lines looked at are the changed lines, the line right after each changed
   block (its heading status depends on the line above), the whole lines the
   passage and the new text lie on, and the passage and new text themselves;
-- it leaves the frontmatter, the leading ``---`` block, as it was, except the
-  value of ``status`` in notes under the actions folder of the vault layout;
+- it leaves the frontmatter, the leading ``---`` block, as it was. The one
+  exception is a note under the actions folder of the vault layout: there the
+  lines for ``status``, ``completed``, ``follow_up`` and ``updated`` may be
+  changed, added or removed, each with one plain word or date as its value.
+  Every other frontmatter line must stay as it was, in the same order, and
+  every other field must still read the same when the block is parsed;
 - fewer than 20 edits by the same person's chats ran in the last 60 minutes;
 - the chat has not read mail in the last 30 minutes.
 
@@ -50,9 +54,11 @@ import re
 import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Literal
+
+import yaml
 
 from src.brain.connector.layout import DEFAULT_LAYOUT
 from src.brain.connector.people import DEFAULT_PERSON_KEY, DEFAULT_PERSON_NAME
@@ -67,7 +73,11 @@ MAX_EDITS_PER_HOUR = 20
 MIN_REASON_WORDS = 3
 FRONTMATTER_FENCE = "---"
 
-_STATUS_LINE = re.compile(r"^status:(?:[ \t][^\r\n]*)?$")
+RECORD_STATE_FIELDS = ("status", "completed", "follow_up", "updated")
+_PLAIN_VALUE = re.compile(r"[A-Za-z0-9_-]+")
+_RECORD_STATE_LINE = re.compile(
+    rf"^(?:{'|'.join(RECORD_STATE_FIELDS)}):(?:[ \t]+[A-Za-z0-9_-]+)?[ \t]*$"
+)
 _UNUSUAL_LINE_END = re.compile("\r(?!\n)|[\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029]")
 _SETEXT_UNDERLINE = re.compile(r"[ \t]*[=-]+[ \t]*")
 
@@ -112,18 +122,56 @@ def _in_actions(rel: str, actions_dir: str) -> bool:
     return len(parts) > len(folder) and parts[: len(folder)] == folder
 
 
+def _is_record_state_line(line: str) -> bool:
+    return _RECORD_STATE_LINE.match(_bare(line)) is not None
+
+
+def _parsed(block: list[str]) -> dict[object, object] | None:
+    try:
+        data = yaml.safe_load("".join(block[1:-1]))
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _plain(value: object) -> bool:
+    if value is None or (isinstance(value, date) and not isinstance(value, datetime)):
+        return True
+    return isinstance(value, str | int) and _PLAIN_VALUE.fullmatch(str(value)) is not None
+
+
 def _frontmatter_kept(rel: str, before: str, after: str, actions_dir: str) -> bool:
+    """Say whether the edit leaves the frontmatter as the rules allow.
+
+    Outside the actions folder the block must be unchanged. Inside it, only
+    the lines of ``RECORD_STATE_FIELDS`` may differ. The check is made twice,
+    on the lines and on the parsed block, because a new line can change what
+    the lines around it mean (a line placed above an indented line, a second
+    line for the same field).
+    """
     old_block, new_block = _frontmatter(before), _frontmatter(after)
     if old_block == new_block:
         return True
-    if old_block is None or new_block is None or len(old_block) != len(new_block):
+    if old_block is None or new_block is None:
         return False
     if not _in_actions(rel, actions_dir):
         return False
-    return all(
-        old == new or (_STATUS_LINE.match(_bare(old)) and _STATUS_LINE.match(_bare(new)))
-        for old, new in zip(old_block, new_block, strict=True)
-    )
+    old_rest = [line for line in old_block if not _is_record_state_line(line)]
+    new_rest = [line for line in new_block if not _is_record_state_line(line)]
+    if old_rest != new_rest:
+        return False
+    names = [line.split(":", 1)[0] for line in new_block if _is_record_state_line(line)]
+    if len(names) != len(set(names)):
+        return False
+    old_data, new_data = _parsed(old_block), _parsed(new_block)
+    if old_data is None or new_data is None:
+        return False
+    if not all(_plain(new_data.get(name)) for name in RECORD_STATE_FIELDS):
+        return False
+    for name in RECORD_STATE_FIELDS:
+        old_data.pop(name, None)
+        new_data.pop(name, None)
+    return old_data == new_data
 
 
 def _one_line_end(text: str) -> str:
